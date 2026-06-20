@@ -28,14 +28,14 @@ class XiaoheihePricePlugin(star.Star):
         self.service = XiaoheihePriceService.from_config(self.config)
 
     @filter.command(
-        "小黑盒价格",
-        alias={"小黑盒史低", "xhhprice"},
+        "steamprice",
+        alias={"xhhprice", "heyboxprice"},
         ignore_prefix=True,
     )
     async def xiaoheihe_price_command(self, event: AstrMessageEvent, query: str = ""):
         query = query.strip()
         if not query:
-            yield event.plain_result("用法：/小黑盒价格 <游戏名|Steam appid|Steam 链接> [国区/美区/UA...]")
+            yield event.plain_result("Usage: /steamprice <game name|Steam appid|Steam URL> [CN/US/UA...]")
             return
 
         try:

@@ -25,18 +25,18 @@ https://github.com/penguin-madagascar/astrbot_plugin_xiaoheihe_price
 ## 命令
 
 ```text
-/小黑盒价格 <游戏名|Steam appid|Steam 链接> [地区]
+/steamprice <游戏名|Steam appid|Steam 链接> [地区]
 ```
 
 示例：
 
 ```text
-/小黑盒价格 艾尔登法环
-/小黑盒价格 730 国区
-/小黑盒价格 https://store.steampowered.com/app/1245620/ 美区
+/steamprice 艾尔登法环
+/steamprice 730 CN
+/steamprice https://store.steampowered.com/app/1245620/ US
 ```
 
-可用别名：`/小黑盒史低`、`/xhhprice`。
+可用别名：`/xhhprice`、`/heyboxprice`。所有命令名均为英文，游戏名和地区参数仍支持中文。
 
 ## 配置
 
