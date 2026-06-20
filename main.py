@@ -9,9 +9,9 @@ from .xiaoheihe_price import PriceLookupError, XiaoheihePriceService
 
 
 logger = logging.getLogger(__name__)
-PLUGIN_NAME = "astrbot_plugin_xiaoheihe_price"
+PLUGIN_NAME = "astrbot_plugin_steam_price_heybox"
 PLUGIN_VERSION = "1.0.0"
-PLUGIN_REPOSITORY = "https://github.com/penguin-madagascar/astrbot_plugin_xiaoheihe_price"
+PLUGIN_REPOSITORY = "https://github.com/penguin-madagascar/astrbot_plugin_steam_price_heybox"
 
 
 @star.register(

@@ -1,4 +1,4 @@
-# AstrBot 小黑盒 Steam 价格查询
+# AstrBot Steam 价格查询（小黑盒）
 
 一个无需 API Key 的 AstrBot 插件，通过 Steam 商店搜索和小黑盒公开接口查询游戏价格。
 
@@ -17,10 +17,10 @@
 在 AstrBot 管理面板的插件页选择从 GitHub 仓库安装，并填写：
 
 ```text
-https://github.com/penguin-madagascar/astrbot_plugin_xiaoheihe_price
+https://github.com/penguin-madagascar/astrbot_plugin_steam_price_heybox
 ```
 
-也可以将仓库克隆到 AstrBot 的 `data/plugins/astrbot_plugin_xiaoheihe_price` 目录，然后重启 AstrBot 或重载插件。
+也可以将仓库克隆到 AstrBot 的 `data/plugins/astrbot_plugin_steam_price_heybox` 目录，然后重启 AstrBot 或重载插件。
 
 ## 命令
 
