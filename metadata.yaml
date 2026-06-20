@@ -1,0 +1,6 @@
+name: astrbot_plugin_xiaoheihe_price
+display_name: 小黑盒 Steam 价格查询
+desc: 无需 API Key，查询小黑盒 Steam 游戏价格、历史最低价、价格走势和跨区价格。
+author: penguin-madagascar
+version: 1.0.0
+repo: https://github.com/penguin-madagascar/astrbot_plugin_xiaoheihe_price

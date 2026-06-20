@@ -1,0 +1,37 @@
+{
+  "timeout_seconds": {
+    "type": "int",
+    "description": "HTTP 请求超时时间。",
+    "default": 15
+  },
+  "default_country": {
+    "type": "string",
+    "description": "Steam 商店搜索默认区域。",
+    "default": "CN"
+  },
+  "default_language": {
+    "type": "string",
+    "description": "Steam 商店搜索默认语言。",
+    "default": "schinese"
+  },
+  "default_history_country": {
+    "type": "string",
+    "description": "用户未指定区域时，默认查询历史价格的区域。",
+    "default": "CN"
+  },
+  "history_days": {
+    "type": "int",
+    "description": "小黑盒历史价格查询天数。",
+    "default": 720
+  },
+  "global_price_limit": {
+    "type": "int",
+    "description": "未指定区域时显示的小黑盒各区当前价数量。",
+    "default": 10
+  },
+  "show_api_links": {
+    "type": "bool",
+    "description": "是否在回复中显示小黑盒接口链接。",
+    "default": false
+  }
+}
