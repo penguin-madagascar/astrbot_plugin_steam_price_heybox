@@ -24,6 +24,11 @@
     "description": "小黑盒历史价格查询天数。",
     "default": 720
   },
+  "history_event_limit": {
+    "type": "int",
+    "description": "历史模式显示的最近促销次数。",
+    "default": 5
+  },
   "global_price_limit": {
     "type": "int",
     "description": "未指定区域时显示的小黑盒各区当前价数量。",

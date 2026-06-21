@@ -1,1 +1,1 @@
-"""Xiaoheihe Steam game price plugin for AstrBot."""
+"""Steam price and sale history plugin backed by Steam and Heybox data."""
