@@ -43,12 +43,13 @@ AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
 - `detailed_info`：语言、分类、成就、DLC、评分和内容提示等扩展资料。
 - 地区必须位于游戏名前并带 `-`，支持两字母代码或正式中文国名。
 - 地区参数仅适用于默认价格模式和 `history`，不再支持名称后的旧写法。
+- 游戏名内部的连字符会原样保留，例如 `Half-Life 2`。
 
 示例：
 
 ```text
-/steamprice -US ACE COMBAT™7: SKIES UNKNOWN
-/steamprice history -中国 1245620
+/steamprice 艾尔登法环
+/steamprice history -CN 1245620
 /steamprice regions https://store.steampowered.com/app/1091500/
 /steamprice info Stardew Valley
 /steamprice detailed_info 2277560

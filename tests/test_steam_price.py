@@ -154,6 +154,15 @@ class SteamPriceServiceTests(unittest.IsolatedAsyncioTestCase):
             [("ACE COMBAT™7: SKIES UNKNOWN", "US", "schinese")],
         )
 
+    async def test_search_preserves_hyphen_inside_game_name(self) -> None:
+        steam = FakeSteamClient()
+        await self.service(steam=steam).execute("Half-Life 2")
+
+        self.assertEqual(
+            steam.search_calls,
+            [("Half-Life 2", "CN", "schinese")],
+        )
+
     async def test_summary_falls_back_to_history_when_steam_fails(self) -> None:
         steam = FakeSteamClient(RuntimeError("Steam unavailable"))
         messages = await self.service(steam=steam).execute("123")
@@ -285,6 +294,12 @@ class SteamPriceServiceTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CommandParserTests(unittest.TestCase):
+    def test_hyphen_inside_game_name_is_not_a_country_prefix(self) -> None:
+        parsed = parse_command("Half-Life 2")
+
+        self.assertEqual(parsed.country, "CN")
+        self.assertEqual(parsed.target, "Half-Life 2")
+
     def test_summary_country_prefix_and_special_characters(self) -> None:
         parsed = parse_command("-us ACE COMBAT™7: SKIES UNKNOWN")
 
