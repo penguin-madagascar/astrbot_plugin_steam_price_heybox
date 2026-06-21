@@ -1,69 +1,93 @@
 # AstrBot Steam 价格查询（小黑盒）
 
-一个无需 API Key 的 AstrBot 插件，通过 Steam 商店搜索和小黑盒公开接口查询游戏价格。
+无需 API Key 的 AstrBot 插件，使用 Steam 商店和小黑盒公开数据查询当前价格、
+历史最低价、促销记录、全球区价和游戏资料。
 
 ## 功能
 
 - 支持游戏名、Steam appid 和 Steam 商店链接。
-- 查询指定地区的当前价格、历史最低价和近期价格变化。
-- 补充小黑盒全球区价与小黑盒商城价格。
-- 支持国区、美区、港区、日区、乌克兰区等常用地区名称或代码。
-- 仅使用 Python 标准库，无额外运行时依赖。
-
-本插件直接使用小黑盒价格数据，不依赖 IsThereAnyDeal、Steam Web API Key 或大模型。AstrBot 中已有的通用 Steam 价格插件覆盖价格和史低查询；本插件的定位是补充小黑盒历史数据与小黑盒商城价格。
+- 使用 Steam 官方当前价格，并通过小黑盒补充史低和促销历史。
+- 计算当前或上次促销的起止时间、持续天数、最大折扣和史低出现次数。
+- 对比全球区价，显示最低价区服及相对国区的差额。
+- 提供基础和详细两级 Steam 游戏资料。
 
 ## 安装
 
-在 AstrBot 管理面板的插件页选择从 GitHub 仓库安装，并填写：
+在 AstrBot 管理面板中选择从 GitHub 仓库安装：
 
 ```text
 https://github.com/penguin-madagascar/astrbot_plugin_steam_price_heybox
 ```
 
-也可以将仓库克隆到 AstrBot 的 `data/plugins/astrbot_plugin_steam_price_heybox` 目录，然后重启 AstrBot 或重载插件。
+也可以将仓库克隆到：
+
+```text
+AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
+```
 
 ## 命令
 
 ```text
-/steamprice <游戏名|Steam appid|Steam 链接> [地区]
+/steamprice <游戏名|appid|Steam URL> [地区]
+/steamprice history <目标> [地区]
+/steamprice regions <目标>
+/steamprice info <目标>
+/steamprice detailed_info <目标>
 ```
+
+- 默认模式：当前价、史低、促销状态和最低价区服摘要。
+- `history`：最近促销记录与历史统计。
+- `regions`：全球区价排行和相对国区差额。
+- `info`：发行日期、开发商、发行商和平台等基础资料。
+- `detailed_info`：语言、分类、成就、DLC、评分和内容提示等扩展资料。
 
 示例：
 
 ```text
 /steamprice 艾尔登法环
-/steamprice 730 CN
-/steamprice https://store.steampowered.com/app/1245620/ US
+/steamprice history 1245620 CN
+/steamprice regions https://store.steampowered.com/app/1091500/
+/steamprice info Stardew Valley
+/steamprice detailed_info 2277560
 ```
 
-可用别名：`/xhhprice`、`/heyboxprice`。所有命令名均为英文，游戏名和地区参数仍支持中文。
+入口别名：`/xhhprice`、`/heyboxprice`。
 
 ## 配置
 
 | 配置项 | 默认值 | 说明 |
 | --- | --- | --- |
 | `timeout_seconds` | `15` | HTTP 请求超时时间，单位为秒 |
-| `default_country` | `CN` | Steam 商店搜索区域 |
-| `default_language` | `schinese` | Steam 商店搜索语言 |
-| `default_history_country` | `CN` | 未指定地区时查询的历史价格区域 |
-| `history_days` | `720` | 历史价格查询天数 |
-| `global_price_limit` | `10` | 未指定地区时最多显示的全球区价数量 |
-| `show_api_links` | `false` | 是否在回复中显示接口链接 |
+| `default_country` | `CN` | Steam 搜索和资料的默认地区 |
+| `default_language` | `schinese` | Steam 商店语言 |
+| `default_history_country` | `CN` | 历史价格默认地区 |
+| `history_days` | `720` | 传递给小黑盒的历史查询天数 |
+| `history_event_limit` | `5` | `history` 显示的最近促销次数 |
+| `global_price_limit` | `10` | `regions` 显示的区服数量 |
+| `show_api_links` | `false` | 是否显示数据接口链接 |
 
 ## 数据与限制
 
-- 游戏名解析使用 Steam 商店搜索接口；价格与史低数据来自小黑盒公开接口。
-- 小黑盒并未为此插件提供正式 API，接口变化可能导致查询暂时不可用。
-- 价格仅供参考，购买前请以 Steam 或小黑盒实际结算页面为准。
-- 查询内容会发送到 Steam 和小黑盒的接口，不会由插件持久化。
+- 当前价格和游戏资料来自 Steam 商店公开接口。
+- 历史价格和全球区价来自小黑盒公开接口。
+- 小黑盒未为本插件提供正式 API，接口变化可能导致部分查询暂时不可用。
+- 促销起止时间由历史价格变化点推导，不代表 Steam 公布的精确截止时间。
+- 插件不接入 ITAD，不需要 Steam Web API Key，也不会持久化查询内容。
+- 价格仅供参考，购买前请以实际结算页面为准。
 
 ## 开发
 
 ```bash
+python -m pip install -r requirements.txt ruff pyyaml
+ruff check .
+ruff format --check .
 python -m unittest
-python -m compileall .
+python -m compileall -q __init__.py main.py models.py api_clients.py price_analysis.py steam_price.py
 ```
+
+市场发布和人工检查步骤见 [PUBLISHING.md](PUBLISHING.md)。
 
 ## License
 
-[MIT](LICENSE)
+代码使用 [MIT](LICENSE) 许可证。`logo.png` 是小黑盒标识，不属于 MIT 授权范围；
+详情见 [NOTICE.md](NOTICE.md)。本项目是非官方社区插件，与 Steam 或小黑盒不存在隶属或背书关系。

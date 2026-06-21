@@ -19,7 +19,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt ruff pyyaml
+      - name: Lint
+        run: ruff check .
+      - name: Check formatting
+        run: ruff format --check .
       - name: Run tests
         run: python -m unittest
       - name: Compile plugin
-        run: python -m compileall -q __init__.py main.py xiaoheihe_price.py
+        run: >-
+          python -m compileall -q __init__.py main.py models.py api_clients.py
+          price_analysis.py steam_price.py
+
+  release-package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release archive
+        run: git archive --format=zip --output=plugin.zip HEAD
+      - name: Enforce marketplace size limit
+        run: |
+          size=$(stat -c%s plugin.zip)
+          test "$size" -lt $((16 * 1024 * 1024))
+          echo "Release archive: $size bytes"
