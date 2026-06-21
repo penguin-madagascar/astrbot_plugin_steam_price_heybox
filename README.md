@@ -29,11 +29,11 @@ AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
 ## 命令
 
 ```text
-/steamprice [-地区] <游戏名|appid|Steam URL>
-/steamprice history [-地区] <目标>
-/steamprice regions <目标>
-/steamprice info <目标>
-/steamprice detailed_info <目标>
+/steamprice [-地区] [--] <游戏名|appid|Steam URL>
+/steamprice history [-地区] [--] <目标>
+/steamprice regions [--] <目标>
+/steamprice info [--] <目标>
+/steamprice detailed_info [--] <目标>
 ```
 
 - 默认模式：当前价、史低、促销状态和最低价区服摘要。
@@ -44,6 +44,8 @@ AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
 - 地区必须位于游戏名前并带 `-`，支持两字母代码或正式中文国名。
 - 地区参数仅适用于默认价格模式和 `history`，不再支持名称后的旧写法。
 - 游戏名内部的连字符会原样保留，例如 `Half-Life 2`。
+- `--` 是显式参数终止符；当游戏名以类似地区参数的 `-XX` 或 `-中文` 开头时，
+  其后的全部文本会原样作为游戏名。
 
 示例：
 
@@ -53,6 +55,13 @@ AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
 /steamprice regions https://store.steampowered.com/app/1091500/
 /steamprice info Stardew Valley
 /steamprice detailed_info 2277560
+```
+
+显式终止参数解析：
+
+```text
+/steamprice -- -US Game Name
+/steamprice -US -- -Game Name
 ```
 
 入口别名：`/xhhprice`、`/heyboxprice`。

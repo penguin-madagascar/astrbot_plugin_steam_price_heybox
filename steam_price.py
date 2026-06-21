@@ -392,14 +392,17 @@ def parse_command(
     country = default_history_country if mode == "history" else default_country
     country_token = ""
     first, remainder_after_first = split_first(remainder)
-    if first.startswith("-"):
+    if first == "--":
+        remainder = remainder_after_first
+    elif is_country_argument(first):
         if mode not in {"summary", "history"}:
             raise PriceLookupError(f"{mode} 模式不支持地区参数。")
         country_token = first[1:]
-        if not country_token:
-            raise PriceLookupError("地区参数不能为空，请使用 -CN、-US 或 -中国 等格式。")
         country = parse_country(country_token)
         remainder = remainder_after_first
+        first, remainder_after_first = split_first(remainder)
+        if first == "--":
+            remainder = remainder_after_first
 
     return ParsedCommand(
         mode=mode,
@@ -416,14 +419,21 @@ def split_first(value: str) -> tuple[str, str]:
     return parts[0], parts[1] if len(parts) == 2 else ""
 
 
+def is_country_argument(value: str) -> bool:
+    if not value.startswith("-") or value == "--":
+        return False
+    token = value[1:]
+    return bool(parse_country(token) or re.fullmatch(r"[\u3400-\u9fff]+", token))
+
+
 def usage_text() -> str:
     return (
         "用法：\n"
-        "/steamprice [-地区] <游戏名|appid|Steam URL>\n"
-        "/steamprice history [-地区] <目标>\n"
-        "/steamprice regions <目标>\n"
-        "/steamprice info <目标>\n"
-        "/steamprice detailed_info <目标>"
+        "/steamprice [-地区] [--] <游戏名|appid|Steam URL>\n"
+        "/steamprice history [-地区] [--] <目标>\n"
+        "/steamprice regions [--] <目标>\n"
+        "/steamprice info [--] <目标>\n"
+        "/steamprice detailed_info [--] <目标>"
     )
 
 

@@ -163,6 +163,15 @@ class SteamPriceServiceTests(unittest.IsolatedAsyncioTestCase):
             [("Half-Life 2", "CN", "schinese")],
         )
 
+    async def test_search_preserves_leading_hyphen_after_terminator(self) -> None:
+        steam = FakeSteamClient()
+        await self.service(steam=steam).execute("-- -US Game Name")
+
+        self.assertEqual(
+            steam.search_calls,
+            [("-US Game Name", "CN", "schinese")],
+        )
+
     async def test_summary_falls_back_to_history_when_steam_fails(self) -> None:
         steam = FakeSteamClient(RuntimeError("Steam unavailable"))
         messages = await self.service(steam=steam).execute("123")
@@ -299,6 +308,31 @@ class CommandParserTests(unittest.TestCase):
 
         self.assertEqual(parsed.country, "CN")
         self.assertEqual(parsed.target, "Half-Life 2")
+
+    def test_non_country_leading_hyphen_is_preserved(self) -> None:
+        parsed = parse_command("-Half-Life 2")
+
+        self.assertEqual(parsed.country, "CN")
+        self.assertEqual(parsed.target, "-Half-Life 2")
+
+    def test_terminator_disambiguates_country_shaped_game_name(self) -> None:
+        parsed = parse_command("-- -US Game Name")
+
+        self.assertEqual(parsed.country, "CN")
+        self.assertEqual(parsed.target, "-US Game Name")
+
+    def test_terminator_is_supported_after_country(self) -> None:
+        parsed = parse_command("-US -- -Game Name")
+
+        self.assertEqual(parsed.country, "US")
+        self.assertEqual(parsed.target, "-Game Name")
+
+    def test_terminator_is_supported_for_non_price_modes(self) -> None:
+        for mode in ("regions", "info", "detailed_info"):
+            with self.subTest(mode=mode):
+                parsed = parse_command(f"{mode} -- -US Game Name")
+                self.assertEqual(parsed.mode, mode)
+                self.assertEqual(parsed.target, "-US Game Name")
 
     def test_summary_country_prefix_and_special_characters(self) -> None:
         parsed = parse_command("-us ACE COMBAT™7: SKIES UNKNOWN")
