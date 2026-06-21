@@ -28,8 +28,8 @@ class ReleaseMetadataTests(unittest.TestCase):
             {key: metadata.get(key) for key in EXPECTED_MARKET_DATA},
             EXPECTED_MARKET_DATA,
         )
-        self.assertEqual(metadata["version"], "1.2.0")
-        self.assertIn('PLUGIN_VERSION = "1.2.0"', (ROOT / "main.py").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["version"], "1.2.1")
+        self.assertIn('PLUGIN_VERSION = "1.2.1"', (ROOT / "main.py").read_text(encoding="utf-8"))
         self.assertNotIn("description", metadata)
         self.assertFalse(metadata["repo"].endswith(".git"))
 
