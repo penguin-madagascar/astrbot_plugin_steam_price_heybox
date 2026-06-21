@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal
-from typing import Any, Callable, Literal
+from typing import Any, Awaitable, Callable, Literal
 
 import httpx
 
@@ -16,10 +16,12 @@ from .api_clients import (
     SteamStoreClient,
 )
 from .models import GameIdentity, PriceHistory, RegionPrice, SaleEvent, SteamGameDetails
+from .name_correction import NameCorrection, NameCorrectionRequest
 from .price_analysis import parse_price_history
 
 CommandMode = Literal["summary", "history", "regions", "info", "detailed_info"]
 COMMAND_MODES = {"history", "regions", "info", "detailed_info"}
+NameCorrector = Callable[[NameCorrectionRequest], Awaitable[NameCorrection | None]]
 
 COUNTRY_NAMES = {
     "CN": "中国",
@@ -85,6 +87,8 @@ class SteamPriceService:
         history_event_limit: int = 5,
         global_price_limit: int = 10,
         show_api_links: bool = False,
+        name_corrector: NameCorrector | None = None,
+        llm_name_retry_count: int = 3,
         today_provider: Callable[[], date] = utc_today,
     ) -> None:
         self.steam_client = steam_client
@@ -96,6 +100,8 @@ class SteamPriceService:
         self.history_event_limit = max(history_event_limit, 1)
         self.global_price_limit = max(global_price_limit, 1)
         self.show_api_links = show_api_links
+        self.name_corrector = name_corrector
+        self.llm_name_retry_count = llm_name_retry_count
         self.today_provider = today_provider
 
     @classmethod
@@ -103,6 +109,7 @@ class SteamPriceService:
         cls,
         config: dict[str, Any],
         client: httpx.AsyncClient,
+        name_corrector: NameCorrector | None = None,
     ) -> SteamPriceService:
         return cls(
             steam_client=SteamStoreClient(client),
@@ -114,6 +121,8 @@ class SteamPriceService:
             history_event_limit=int(config.get("history_event_limit", 5)),
             global_price_limit=int(config.get("global_price_limit", 10)),
             show_api_links=bool(config.get("show_api_links", False)),
+            name_corrector=name_corrector,
+            llm_name_retry_count=int(config.get("llm_name_retry_count", 3)),
         )
 
     async def execute(self, text: str) -> list[str]:
@@ -124,46 +133,136 @@ class SteamPriceService:
         )
         if not command.target:
             raise PriceLookupError(usage_text())
-        if not command.country:
-            raise PriceLookupError(
-                f"无法识别地区：-{command.country_token}。请使用两字母代码或内置正式中文国名。"
-            )
-
-        identity = await self.resolve_game(command.target, command.country)
+        identity, country = await self.resolve_game(
+            command.target,
+            command.country,
+            command.country_token,
+        )
         if command.mode == "history":
-            return [await self.history_text(identity, command.country)]
+            return [await self.history_text(identity, country)]
         if command.mode == "regions":
             return [await self.regions_text(identity)]
         if command.mode == "info":
-            details = await self.require_details(identity, command.country)
+            details = await self.require_details(identity, country)
             return [format_basic_info(details)]
         if command.mode == "detailed_info":
-            details = await self.require_details(identity, command.country)
+            details = await self.require_details(identity, country)
             return [format_basic_info(details), format_detailed_info(details)]
-        return [await self.summary_text(identity, command.country)]
+        return [await self.summary_text(identity, country)]
 
-    async def resolve_game(self, text: str, country: str) -> GameIdentity:
+    async def resolve_game(
+        self,
+        text: str,
+        country: str,
+        country_token: str = "",
+    ) -> tuple[GameIdentity, str]:
         appid = extract_appid(text)
         if appid:
-            return GameIdentity(appid, f"appid={appid}")
+            country = await self.resolve_country_for_appid(text, country, country_token)
+            return GameIdentity(appid, f"appid={appid}"), country
         query = text.strip()
         if not query:
             raise PriceLookupError("请输入游戏名、Steam appid 或 Steam 商店链接。")
 
+        searched = set()
+        failed_names: list[str] = []
+        suggestions: list[str] = []
+        if self.name_corrector:
+            for _ in range(self.correction_attempt_limit):
+                correction = await self.request_name_correction(
+                    query,
+                    country,
+                    country_token,
+                    tuple(failed_names),
+                )
+                if correction is None:
+                    continue
+                if not country:
+                    country = parse_country(correction.country_code)
+                if correction.name:
+                    suggestions.extend(unique_texts((correction.name,)))
+                if not country:
+                    continue
+                for suggestion in unique_texts(tuple(suggestions)):
+                    identity = await self.search_game(suggestion, country, searched)
+                    if identity:
+                        return identity, country
+                    if suggestion.casefold() not in {name.casefold() for name in failed_names}:
+                        failed_names.append(suggestion)
+
+        if not country:
+            raise unknown_country_error(country_token)
+
         variants = unique_texts((query, *STATIC_QUERY_ALIASES.get(query, ())))
         for variant in variants:
-            results = await self.steam_client.search(
-                variant,
-                country,
-                self.default_language,
-            )
-            candidate = choose_steam_candidate(variant, results)
-            if candidate:
-                return GameIdentity(
-                    int(candidate["appid"]),
-                    f"{candidate['name']} / appid={candidate['appid']}",
-                )
+            identity = await self.search_game(variant, country, searched)
+            if identity:
+                return identity, country
         raise PriceLookupError(f"Steam 商店没有搜索到游戏：{query}")
+
+    @property
+    def correction_attempt_limit(self) -> int:
+        return max(self.llm_name_retry_count, 0) + 1
+
+    async def resolve_country_for_appid(
+        self,
+        target: str,
+        country: str,
+        country_token: str,
+    ) -> str:
+        if country:
+            return country
+        if self.name_corrector:
+            for _ in range(self.correction_attempt_limit):
+                correction = await self.request_name_correction(
+                    target,
+                    country,
+                    country_token,
+                    (),
+                )
+                if correction and (country := parse_country(correction.country_code)):
+                    return country
+        raise unknown_country_error(country_token)
+
+    async def request_name_correction(
+        self,
+        original_name: str,
+        country: str,
+        country_token: str,
+        failed_names: tuple[str, ...],
+    ) -> NameCorrection | None:
+        if not self.name_corrector:
+            return None
+        try:
+            return await self.name_corrector(
+                NameCorrectionRequest(
+                    original_name=original_name,
+                    country_code=country,
+                    unresolved_country=country_token if not country else "",
+                    failed_names=failed_names,
+                )
+            )
+        except Exception:
+            return None
+
+    async def search_game(
+        self,
+        query: str,
+        country: str,
+        searched: set[str],
+    ) -> GameIdentity | None:
+        key = query.casefold()
+        if key in searched:
+            return None
+        searched.add(key)
+        results = await self.steam_client.search(query, country, self.default_language)
+        candidate = choose_steam_candidate(query, results)
+        if not candidate:
+            return None
+        return GameIdentity(
+            int(candidate["appid"]),
+            f"{candidate['name']} / appid={candidate['appid']}",
+        )
 
     async def require_details(self, identity: GameIdentity, country: str) -> SteamGameDetails:
         try:
@@ -347,6 +446,10 @@ def parse_country(value: str) -> str:
     if re.fullmatch(r"[A-Za-z]{2}", text):
         return text.upper()
     return FORMAL_COUNTRY_CODES.get(text, "")
+
+
+def unknown_country_error(country_token: str) -> PriceLookupError:
+    return PriceLookupError(f"无法识别地区：-{country_token}。请使用两字母代码或内置正式中文国名。")
 
 
 def xiaoheihe_country(country: str) -> str:

@@ -15,6 +15,9 @@ from astrbot_plugin_steam_price_heybox.models import (  # noqa: E402
     SteamGameDetails,
     SteamPrice,
 )
+from astrbot_plugin_steam_price_heybox.name_correction import (  # noqa: E402
+    NameCorrection,
+)
 from astrbot_plugin_steam_price_heybox.price_analysis import (  # noqa: E402
     parse_price_history,
 )
@@ -29,13 +32,20 @@ from astrbot_plugin_steam_price_heybox.steam_price import (  # noqa: E402
 
 
 class FakeSteamClient:
-    def __init__(self, details: SteamGameDetails | Exception | None = None) -> None:
+    def __init__(
+        self,
+        details: SteamGameDetails | Exception | None = None,
+        search_results: dict[str, list[dict]] | None = None,
+    ) -> None:
         self.details_result = details or game_details()
+        self.search_results = search_results
         self.search_calls = []
         self.detail_calls = []
 
     async def search(self, query: str, country: str, language: str):
         self.search_calls.append((query, country, language))
+        if self.search_results is not None:
+            return self.search_results.get(query, [])
         return [{"appid": 123, "name": query}]
 
     async def details(self, appid: int, country: str, language: str):
@@ -65,11 +75,34 @@ class FakeHeyboxClient:
         return self.regions
 
 
+class FakeNameCorrector:
+    def __init__(self, responses) -> None:
+        self.responses = list(responses)
+        self.calls = []
+
+    async def __call__(self, request):
+        self.calls.append(request)
+        if not self.responses:
+            raise AssertionError("Unexpected name correction call")
+        response = self.responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+
 class SteamPriceServiceTests(unittest.IsolatedAsyncioTestCase):
-    def service(self, steam=None, heybox=None) -> SteamPriceService:
+    def service(
+        self,
+        steam=None,
+        heybox=None,
+        corrector=None,
+        retry_count=3,
+    ) -> SteamPriceService:
         return SteamPriceService(
             steam_client=steam or FakeSteamClient(),
             heybox_client=heybox or FakeHeyboxClient(),
+            name_corrector=corrector,
+            llm_name_retry_count=retry_count,
             today_provider=lambda: date(2026, 2, 10),
         )
 
@@ -137,6 +170,118 @@ class SteamPriceServiceTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_query_reports_usage(self) -> None:
         with self.assertRaisesRegex(PriceLookupError, "/steamprice detailed_info"):
             await self.service().execute("")
+
+    async def test_llm_combines_name_and_unknown_country_correction(self) -> None:
+        corrector = FakeNameCorrector([NameCorrection("ACE COMBAT™ 7: SKIES UNKNOWN", "SG")])
+        steam = FakeSteamClient(
+            search_results={
+                "ACE COMBAT™ 7: SKIES UNKNOWN": [
+                    {"appid": 502500, "name": "ACE COMBAT™ 7: SKIES UNKNOWN"}
+                ]
+            }
+        )
+
+        identity, country = await self.service(
+            steam=steam,
+            corrector=corrector,
+        ).resolve_game("Ace Combat 7", "", "新加坡")
+
+        self.assertEqual(identity.appid, 502500)
+        self.assertEqual(country, "SG")
+        self.assertEqual(corrector.calls[0].unresolved_country, "新加坡")
+        self.assertEqual(
+            steam.search_calls,
+            [("ACE COMBAT™ 7: SKIES UNKNOWN", "SG", "schinese")],
+        )
+
+    async def test_llm_retries_until_a_confident_match(self) -> None:
+        corrector = FakeNameCorrector(
+            [
+                NameCorrection("Wrong Name", "US"),
+                NameCorrection("ACE COMBAT™ 7: SKIES UNKNOWN", "US"),
+            ]
+        )
+        steam = FakeSteamClient(
+            search_results={
+                "ACE COMBAT™ 7: SKIES UNKNOWN": [
+                    {"appid": 502500, "name": "ACE COMBAT™ 7: SKIES UNKNOWN"}
+                ]
+            }
+        )
+
+        identity, country = await self.service(
+            steam=steam,
+            corrector=corrector,
+        ).resolve_game("Ace Combat", "US")
+
+        self.assertEqual((identity.appid, country), (502500, "US"))
+        self.assertEqual(len(corrector.calls), 2)
+        self.assertEqual(corrector.calls[1].failed_names, ("Wrong Name",))
+
+    async def test_llm_retry_count_controls_total_calls(self) -> None:
+        for retry_count, expected_calls in ((-2, 1), (0, 1), (3, 4)):
+            with self.subTest(retry_count=retry_count):
+                corrector = FakeNameCorrector(
+                    [NameCorrection(f"Wrong {index}", "CN") for index in range(expected_calls)]
+                )
+                service = self.service(
+                    steam=FakeSteamClient(search_results={}),
+                    corrector=corrector,
+                    retry_count=retry_count,
+                )
+
+                with self.assertRaisesRegex(PriceLookupError, "没有搜索到游戏"):
+                    await service.resolve_game("Original Name", "CN")
+
+                self.assertEqual(len(corrector.calls), expected_calls)
+
+    async def test_duplicate_llm_suggestions_are_searched_once(self) -> None:
+        corrector = FakeNameCorrector([NameCorrection("Same Guess", "CN")] * 4)
+        steam = FakeSteamClient(search_results={})
+
+        with self.assertRaises(PriceLookupError):
+            await self.service(steam=steam, corrector=corrector).resolve_game("Original Name", "CN")
+
+        self.assertEqual(len(corrector.calls), 4)
+        self.assertEqual(
+            [call[0] for call in steam.search_calls].count("Same Guess"),
+            1,
+        )
+
+    async def test_llm_failure_falls_back_to_original_name(self) -> None:
+        corrector = FakeNameCorrector([RuntimeError("provider unavailable")])
+        steam = FakeSteamClient()
+
+        identity, country = await self.service(
+            steam=steam,
+            corrector=corrector,
+            retry_count=0,
+        ).resolve_game("Original Name", "CN")
+
+        self.assertEqual((identity.appid, country), (123, "CN"))
+        self.assertEqual(steam.search_calls[0][0], "Original Name")
+
+    async def test_unknown_country_without_llm_reports_error(self) -> None:
+        with self.assertRaisesRegex(PriceLookupError, "无法识别地区：-新加坡"):
+            await self.service().resolve_game("Test Game", "", "新加坡")
+
+    async def test_appid_skips_name_correction_for_known_country(self) -> None:
+        corrector = FakeNameCorrector([])
+
+        identity, country = await self.service(corrector=corrector).resolve_game("1245620", "CN")
+
+        self.assertEqual((identity.appid, country), (1245620, "CN"))
+        self.assertEqual(corrector.calls, [])
+
+    async def test_appid_uses_llm_only_for_unknown_country(self) -> None:
+        corrector = FakeNameCorrector([NameCorrection("", "SG")])
+
+        identity, country = await self.service(corrector=corrector).resolve_game(
+            "1245620", "", "新加坡"
+        )
+
+        self.assertEqual((identity.appid, country), (1245620, "SG"))
+        self.assertEqual(len(corrector.calls), 1)
 
 
 class CommandParserTests(unittest.TestCase):

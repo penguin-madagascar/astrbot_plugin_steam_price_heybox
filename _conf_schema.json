@@ -38,5 +38,18 @@
     "type": "bool",
     "description": "是否在回复中显示小黑盒接口链接。",
     "default": false
+  },
+  "llm_provider_id": {
+    "type": "string",
+    "description": "用于校正游戏名和未知中文地区的 LLM 提供商。",
+    "hint": "留空时不调用 LLM，直接使用原始名称和内置别名搜索。",
+    "_special": "select_provider",
+    "default": ""
+  },
+  "llm_name_retry_count": {
+    "type": "int",
+    "description": "名称校正未匹配后的额外 LLM 重试次数。",
+    "hint": "实际最多调用 max(配置值, 0) + 1 次；0 或负数仍执行首次校正。",
+    "default": 3
   }
 }
