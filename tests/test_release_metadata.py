@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import struct
 import unittest
 from pathlib import Path
@@ -42,6 +43,24 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertNotIn("import urllib", python_source)
         self.assertIn("from astrbot.api import AstrBotConfig, logger", python_source)
         self.assertIn("httpx.AsyncClient", python_source)
+
+    def test_command_uses_runtime_greedy_string_annotation(self) -> None:
+        tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+        self.assertFalse(
+            any(
+                isinstance(node, ast.ImportFrom) and node.module == "__future__"
+                for node in tree.body
+            )
+        )
+        handler = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "steam_price_command"
+        )
+        query = next(argument for argument in handler.args.args if argument.arg == "query")
+        self.assertIsInstance(query.annotation, ast.Name)
+        self.assertEqual(query.annotation.id, "GreedyStr")
+        self.assertEqual(handler.args.defaults, [])
 
     def test_logo_is_256_pixel_square_png(self) -> None:
         data = (ROOT / "logo.png").read_bytes()

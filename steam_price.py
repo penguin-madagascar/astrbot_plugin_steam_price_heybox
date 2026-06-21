@@ -36,35 +36,7 @@ COUNTRY_NAMES = {
     "GB": "英国",
     "DE": "德国",
 }
-COUNTRY_ALIASES = {
-    "国区": "CN",
-    "中国": "CN",
-    "大陆": "CN",
-    "美区": "US",
-    "美国": "US",
-    "港区": "HK",
-    "香港": "HK",
-    "台区": "TW",
-    "台湾": "TW",
-    "日区": "JP",
-    "日本": "JP",
-    "韩区": "KR",
-    "韩国": "KR",
-    "乌克兰区": "UA",
-    "乌克兰": "UA",
-    "ukraine": "UA",
-    "土区": "TR",
-    "土耳其": "TR",
-    "阿区": "AR",
-    "阿根廷": "AR",
-    "巴西": "BR",
-    "俄区": "RU",
-    "俄罗斯": "RU",
-    "英区": "GB",
-    "英国": "GB",
-    "德区": "DE",
-    "德国": "DE",
-}
+FORMAL_COUNTRY_CODES = {name: code for code, name in COUNTRY_NAMES.items()}
 XIAOHEIHE_REGION_ALIASES = {
     "GB": "uk",
     "DE": "eu",
@@ -93,6 +65,7 @@ class ParsedCommand:
     mode: CommandMode
     target: str
     country: str
+    country_token: str = ""
 
 
 def utc_today() -> date:
@@ -116,8 +89,8 @@ class SteamPriceService:
     ) -> None:
         self.steam_client = steam_client
         self.heybox_client = heybox_client
-        self.default_country = normalize_country(default_country) or "CN"
-        self.default_history_country = normalize_country(default_history_country) or "CN"
+        self.default_country = parse_country(default_country) or "CN"
+        self.default_history_country = parse_country(default_history_country) or "CN"
         self.default_language = default_language or "schinese"
         self.history_days = max(history_days, 1)
         self.history_event_limit = max(history_event_limit, 1)
@@ -144,11 +117,19 @@ class SteamPriceService:
         )
 
     async def execute(self, text: str) -> list[str]:
-        command = parse_command(text, self.default_history_country)
+        command = parse_command(
+            text,
+            default_country=self.default_country,
+            default_history_country=self.default_history_country,
+        )
         if not command.target:
             raise PriceLookupError(usage_text())
+        if not command.country:
+            raise PriceLookupError(
+                f"无法识别地区：-{command.country_token}。请使用两字母代码或内置正式中文国名。"
+            )
 
-        identity = await self.resolve_game(command.target)
+        identity = await self.resolve_game(command.target, command.country)
         if command.mode == "history":
             return [await self.history_text(identity, command.country)]
         if command.mode == "regions":
@@ -161,11 +142,11 @@ class SteamPriceService:
             return [format_basic_info(details), format_detailed_info(details)]
         return [await self.summary_text(identity, command.country)]
 
-    async def resolve_game(self, text: str) -> GameIdentity:
+    async def resolve_game(self, text: str, country: str) -> GameIdentity:
         appid = extract_appid(text)
-        query = steam_lookup_game_query(text)
         if appid:
             return GameIdentity(appid, f"appid={appid}")
+        query = text.strip()
         if not query:
             raise PriceLookupError("请输入游戏名、Steam appid 或 Steam 商店链接。")
 
@@ -173,10 +154,10 @@ class SteamPriceService:
         for variant in variants:
             results = await self.steam_client.search(
                 variant,
-                self.default_country,
+                country,
                 self.default_language,
             )
-            candidate = choose_steam_candidate(query, results)
+            candidate = choose_steam_candidate(variant, results)
             if candidate:
                 return GameIdentity(
                     int(candidate["appid"]),
@@ -297,25 +278,50 @@ class SteamPriceService:
         return parse_price_history(result)
 
 
-def parse_command(text: str, default_country: str = "CN") -> ParsedCommand:
-    stripped = text.strip()
-    first, separator, remainder = stripped.partition(" ")
-    first_lower = first.casefold()
-    if first_lower in COMMAND_MODES:
-        mode = first_lower
-        target = remainder.strip() if separator else ""
-    else:
-        mode = "summary"
-        target = stripped
-    country = first_country_from_text(target) or normalize_country(default_country) or "CN"
-    return ParsedCommand(mode=mode, target=target, country=country)
+def parse_command(
+    text: str,
+    default_country: str = "CN",
+    default_history_country: str = "CN",
+) -> ParsedCommand:
+    mode: CommandMode = "summary"
+    remainder = text.strip()
+    first, remainder_after_first = split_first(remainder)
+    if first.casefold() in COMMAND_MODES:
+        mode = first.casefold()
+        remainder = remainder_after_first
+
+    country = default_history_country if mode == "history" else default_country
+    country_token = ""
+    first, remainder_after_first = split_first(remainder)
+    if first.startswith("-"):
+        if mode not in {"summary", "history"}:
+            raise PriceLookupError(f"{mode} 模式不支持地区参数。")
+        country_token = first[1:]
+        if not country_token:
+            raise PriceLookupError("地区参数不能为空，请使用 -CN、-US 或 -中国 等格式。")
+        country = parse_country(country_token)
+        remainder = remainder_after_first
+
+    return ParsedCommand(
+        mode=mode,
+        target=remainder.strip(),
+        country=parse_country(country),
+        country_token=country_token if not country else "",
+    )
+
+
+def split_first(value: str) -> tuple[str, str]:
+    parts = value.split(maxsplit=1)
+    if not parts:
+        return "", ""
+    return parts[0], parts[1] if len(parts) == 2 else ""
 
 
 def usage_text() -> str:
     return (
         "用法：\n"
-        "/steamprice <游戏名|appid|Steam URL> [地区]\n"
-        "/steamprice history <目标> [地区]\n"
+        "/steamprice [-地区] <游戏名|appid|Steam URL>\n"
+        "/steamprice history [-地区] <目标>\n"
         "/steamprice regions <目标>\n"
         "/steamprice info <目标>\n"
         "/steamprice detailed_info <目标>"
@@ -336,65 +342,11 @@ def extract_appid(text: str) -> int:
     return 0
 
 
-def steam_lookup_game_query(query: str) -> str:
-    text = re.sub(r"https?://\S+", " ", query.strip())
-    text = re.sub(r"\b(?:appid|steam_appid)[=: ]+\d+\b", " ", text, flags=re.I)
-    for alias in sorted(COUNTRY_ALIASES, key=len, reverse=True):
-        text = remove_country_alias(text, alias)
-    country_codes = "|".join(COUNTRY_NAMES)
-    text = re.sub(
-        rf"(?<![A-Za-z])(?:{country_codes})(?:区|地区|服|服区)?(?![A-Za-z])",
-        " ",
-        text,
-        flags=re.I,
-    )
-    text = re.sub(
-        r"(?:小黑盒|heybox|xiaoheihe|steam|商店|游戏|查看|查询|查|帮我|看下|看看|"
-        r"各区|区域|历史最低|史低|最低价|价格走势|价格历史|价格|"
-        r"促销时间|促销|折扣|"
-        r"是多少|多少|一下|的)",
-        " ",
-        text,
-        flags=re.I,
-    )
-    text = re.sub(r"[：:，,。？?！!、]+", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def remove_country_alias(text: str, alias: str) -> str:
-    if re.fullmatch(r"[a-z]{2}", alias, re.I):
-        return re.sub(
-            rf"(?<![A-Za-z]){re.escape(alias)}(?:区|地区|服|服区)?(?![A-Za-z])",
-            " ",
-            text,
-            flags=re.I,
-        )
-    return re.sub(re.escape(alias) + r"(?:区|地区|服|服区)?", " ", text, flags=re.I)
-
-
-def first_country_from_text(text: str) -> str:
-    lowered = text.casefold()
-    aliases = sorted(
-        COUNTRY_ALIASES.items(),
-        key=lambda item: len(item[0]),
-        reverse=True,
-    )
-    for alias, country in aliases:
-        if alias.casefold() in lowered:
-            return country
-    for match in re.finditer(r"(?<![A-Za-z])([A-Za-z]{2})(?![A-Za-z])", text):
-        code = match.group(1).upper()
-        if code in COUNTRY_NAMES:
-            return code
-    return ""
-
-
-def normalize_country(value: str) -> str:
+def parse_country(value: str) -> str:
     text = value.strip()
-    upper = text.upper()
-    if upper in COUNTRY_NAMES:
-        return upper
-    return COUNTRY_ALIASES.get(text.casefold(), "")
+    if re.fullmatch(r"[A-Za-z]{2}", text):
+        return text.upper()
+    return FORMAL_COUNTRY_CODES.get(text, "")
 
 
 def xiaoheihe_country(country: str) -> str:
@@ -420,7 +372,7 @@ def choose_steam_candidate(query: str, results: list[dict[str, Any]]) -> dict[st
     ]
     if partial:
         return min(partial, key=lambda item: len(str(item.get("name") or "")))
-    return results[0]
+    return None
 
 
 def normalize_game_title(value: str) -> str:

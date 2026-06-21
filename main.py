@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import httpx
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
@@ -59,7 +57,7 @@ class SteamPriceHeyboxPlugin(Star):
     async def steam_price_command(
         self,
         event: AstrMessageEvent,
-        query: GreedyStr = "",
+        query: GreedyStr,
     ):
         try:
             messages = await self.service.execute(query.strip())

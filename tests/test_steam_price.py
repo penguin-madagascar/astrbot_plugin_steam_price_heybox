@@ -25,7 +25,6 @@ from astrbot_plugin_steam_price_heybox.steam_price import (  # noqa: E402
     extract_appid,
     format_current_price,
     parse_command,
-    steam_lookup_game_query,
 )
 
 
@@ -37,7 +36,7 @@ class FakeSteamClient:
 
     async def search(self, query: str, country: str, language: str):
         self.search_calls.append((query, country, language))
-        return [{"appid": 123, "name": "Test Game"}]
+        return [{"appid": 123, "name": query}]
 
     async def details(self, appid: int, country: str, language: str):
         self.detail_calls.append((appid, country, language))
@@ -75,7 +74,7 @@ class SteamPriceServiceTests(unittest.IsolatedAsyncioTestCase):
         )
 
     async def test_summary_contains_price_history_and_region_comparison(self) -> None:
-        messages = await self.service().execute("appid=123 CN")
+        messages = await self.service().execute("-CN appid=123")
 
         self.assertEqual(len(messages), 1)
         self.assertIn("Steam 当前价格：¥60", messages[0])
@@ -84,7 +83,7 @@ class SteamPriceServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("最低价区服：乌克兰 / UA", messages[0])
 
     async def test_history_mode_lists_recent_sale_events(self) -> None:
-        messages = await self.service().execute("history 123 国区")
+        messages = await self.service().execute("history -中国 123")
 
         self.assertIn("2 次促销", messages[0])
         self.assertIn("最近 2 次促销", messages[0])
@@ -113,6 +112,15 @@ class SteamPriceServiceTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(steam.search_calls, [])
 
+    async def test_search_uses_explicit_country_and_preserves_full_name(self) -> None:
+        steam = FakeSteamClient()
+        await self.service(steam=steam).execute("-US ACE COMBAT™7: SKIES UNKNOWN")
+
+        self.assertEqual(
+            steam.search_calls,
+            [("ACE COMBAT™7: SKIES UNKNOWN", "US", "schinese")],
+        )
+
     async def test_summary_falls_back_to_history_when_steam_fails(self) -> None:
         steam = FakeSteamClient(RuntimeError("Steam unavailable"))
         messages = await self.service(steam=steam).execute("123")
@@ -132,24 +140,60 @@ class SteamPriceServiceTests(unittest.IsolatedAsyncioTestCase):
 
 
 class CommandParserTests(unittest.TestCase):
-    def test_modes_and_country(self) -> None:
-        parsed = parse_command("detailed_info 艾尔登法环 美区")
+    def test_summary_country_prefix_and_special_characters(self) -> None:
+        parsed = parse_command("-us ACE COMBAT™7: SKIES UNKNOWN")
 
-        self.assertEqual(parsed.mode, "detailed_info")
+        self.assertEqual(parsed.mode, "summary")
         self.assertEqual(parsed.country, "US")
-        self.assertEqual(parsed.target, "艾尔登法环 美区")
+        self.assertEqual(parsed.target, "ACE COMBAT™7: SKIES UNKNOWN")
+
+    def test_history_uses_formal_chinese_country(self) -> None:
+        parsed = parse_command("history -俄罗斯 《艾尔登法环》")
+
+        self.assertEqual(parsed.mode, "history")
+        self.assertEqual(parsed.country, "RU")
+        self.assertEqual(parsed.target, "《艾尔登法环》")
+
+    def test_defaults_depend_on_mode(self) -> None:
+        summary = parse_command("Test Game", "US", "JP")
+        history = parse_command("history Test Game", "US", "JP")
+
+        self.assertEqual(summary.country, "US")
+        self.assertEqual(history.country, "JP")
+
+    def test_any_two_letter_country_code_is_accepted(self) -> None:
+        parsed = parse_command("-id Test Game")
+
+        self.assertEqual(parsed.country, "ID")
+
+    def test_unknown_chinese_country_is_retained_for_llm_resolution(self) -> None:
+        parsed = parse_command("-新加坡 Test Game")
+
+        self.assertEqual(parsed.country, "")
+        self.assertEqual(parsed.country_token, "新加坡")
+
+    def test_non_price_modes_reject_country_prefix(self) -> None:
+        for command in (
+            "regions -US Test Game",
+            "info -US Test Game",
+            "detailed_info -US Test Game",
+        ):
+            with (
+                self.subTest(command=command),
+                self.assertRaisesRegex(PriceLookupError, "不支持地区参数"),
+            ):
+                parse_command(command)
+
+    def test_legacy_trailing_country_is_part_of_name(self) -> None:
+        parsed = parse_command("history Test Game CN")
+
+        self.assertEqual(parsed.country, "CN")
+        self.assertEqual(parsed.target, "Test Game CN")
 
     def test_extract_appid(self) -> None:
         self.assertEqual(extract_appid("https://store.steampowered.com/app/730/"), 730)
         self.assertEqual(extract_appid("steam_appid=1245620"), 1245620)
         self.assertEqual(extract_appid("appid 570"), 570)
-
-    def test_query_cleanup(self) -> None:
-        self.assertEqual(
-            steam_lookup_game_query("帮我查 Steam 价格 艾尔登法环 国区"),
-            "艾尔登法环",
-        )
-        self.assertEqual(steam_lookup_game_query("Stardew Valley CN"), "Stardew Valley")
 
     def test_candidate_selection_prefers_exact_match(self) -> None:
         selected = choose_steam_candidate(
@@ -161,6 +205,25 @@ class CommandParserTests(unittest.TestCase):
         )
 
         self.assertEqual(selected["appid"], 2)
+
+    def test_candidate_selection_rejects_unrelated_first_result(self) -> None:
+        selected = choose_steam_candidate(
+            "ACE COMBAT 7",
+            [{"appid": 1, "name": "Dandy Ace"}],
+        )
+
+        self.assertIsNone(selected)
+
+    def test_candidate_selection_accepts_official_extended_title(self) -> None:
+        selected = choose_steam_candidate(
+            "Ace Combat 7",
+            [
+                {"appid": 502500, "name": "ACE COMBAT™ 7: SKIES UNKNOWN"},
+                {"appid": 1, "name": "Dandy Ace"},
+            ],
+        )
+
+        self.assertEqual(selected["appid"], 502500)
 
     def test_free_and_unreleased_price_labels(self) -> None:
         free_game = replace(game_details(), is_free=True, price=None)
