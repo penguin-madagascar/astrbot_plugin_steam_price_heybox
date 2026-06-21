@@ -3,5 +3,5 @@ display_name: Steam 价格查询（小黑盒）
 desc: 无需 API Key，查询 Steam 游戏当前价、历史最低价、促销记录、小黑盒跨区价格与游戏资料。
 short_desc: Steam 当前价、史低、促销记录与跨区价格查询。
 author: penguin-madagascar
-version: 1.1.0
+version: 1.2.0
 repo: https://github.com/penguin-madagascar/astrbot_plugin_steam_price_heybox

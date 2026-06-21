@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import json
 import struct
 import unittest
 from pathlib import Path
@@ -27,7 +28,8 @@ class ReleaseMetadataTests(unittest.TestCase):
             {key: metadata.get(key) for key in EXPECTED_MARKET_DATA},
             EXPECTED_MARKET_DATA,
         )
-        self.assertEqual(metadata["version"], "1.1.0")
+        self.assertEqual(metadata["version"], "1.2.0")
+        self.assertIn('PLUGIN_VERSION = "1.2.0"', (ROOT / "main.py").read_text(encoding="utf-8"))
         self.assertNotIn("description", metadata)
         self.assertFalse(metadata["repo"].endswith(".git"))
 
@@ -61,6 +63,13 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIsInstance(query.annotation, ast.Name)
         self.assertEqual(query.annotation.id, "GreedyStr")
         self.assertEqual(handler.args.defaults, [])
+
+    def test_optional_llm_configuration_defaults(self) -> None:
+        schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(schema["llm_provider_id"]["_special"], "select_provider")
+        self.assertEqual(schema["llm_provider_id"]["default"], "")
+        self.assertEqual(schema["llm_name_retry_count"]["default"], 3)
 
     def test_logo_is_256_pixel_square_png(self) -> None:
         data = (ROOT / "logo.png").read_bytes()

@@ -30,7 +30,7 @@ jobs:
       - name: Compile plugin
         run: >-
           python -m compileall -q __init__.py main.py models.py api_clients.py
-          price_analysis.py steam_price.py
+          name_correction.py price_analysis.py steam_price.py
 
   release-package:
     runs-on: ubuntu-latest

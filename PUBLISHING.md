@@ -6,7 +6,7 @@
 2. 确认 `metadata.yaml` 的 `name`、`author`、`desc`、`repo` 与提交 JSON 完全一致。
 3. 确认仓库为 public，根目录包含 `main.py`、`metadata.yaml` 和 `requirements.txt`。
 4. 确认 release zip 小于 16MB，并使用最新 AstrBot `master` 完成插件加载 smoke test。
-5. 创建并推送 `v1.1.0` 标签和 GitHub Release。
+5. 创建并推送 `v1.2.0` 标签和 GitHub Release。
 
 ## 手动提交
 

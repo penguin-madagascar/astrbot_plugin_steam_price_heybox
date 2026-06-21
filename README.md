@@ -10,6 +10,7 @@
 - 计算当前或上次促销的起止时间、持续天数、最大折扣和史低出现次数。
 - 对比全球区价，显示最低价区服及相对国区的差额。
 - 提供基础和详细两级 Steam 游戏资料。
+- 可选用 AstrBot 已配置的 LLM 校正拼写、翻译和未知中文地区。
 
 ## 安装
 
@@ -28,8 +29,8 @@ AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
 ## 命令
 
 ```text
-/steamprice <游戏名|appid|Steam URL> [地区]
-/steamprice history <目标> [地区]
+/steamprice [-地区] <游戏名|appid|Steam URL>
+/steamprice history [-地区] <目标>
 /steamprice regions <目标>
 /steamprice info <目标>
 /steamprice detailed_info <目标>
@@ -40,12 +41,14 @@ AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
 - `regions`：全球区价排行和相对国区差额。
 - `info`：发行日期、开发商、发行商和平台等基础资料。
 - `detailed_info`：语言、分类、成就、DLC、评分和内容提示等扩展资料。
+- 地区必须位于游戏名前并带 `-`，支持两字母代码或正式中文国名。
+- 地区参数仅适用于默认价格模式和 `history`，不再支持名称后的旧写法。
 
 示例：
 
 ```text
-/steamprice 艾尔登法环
-/steamprice history 1245620 CN
+/steamprice -US ACE COMBAT™7: SKIES UNKNOWN
+/steamprice history -中国 1245620
 /steamprice regions https://store.steampowered.com/app/1091500/
 /steamprice info Stardew Valley
 /steamprice detailed_info 2277560
@@ -65,6 +68,12 @@ AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
 | `history_event_limit` | `5` | `history` 显示的最近促销次数 |
 | `global_price_limit` | `10` | `regions` 显示的区服数量 |
 | `show_api_links` | `false` | 是否显示数据接口链接 |
+| `llm_provider_id` | 空 | 可选的游戏名与未知中文地区校正模型 |
+| `llm_name_retry_count` | `3` | 首次校正失败后的额外 LLM 重试次数 |
+
+选择 LLM 后，首次 Steam 名称搜索前会进行一次校正；未匹配时最多再调用
+`max(llm_name_retry_count, 0)` 次。配置为 `0` 或负数时仍保留首次调用。
+appid 和商店链接不会校正游戏名，只有未知中文地区可能触发 LLM。
 
 ## 数据与限制
 
@@ -73,6 +82,7 @@ AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
 - 小黑盒未为本插件提供正式 API，接口变化可能导致部分查询暂时不可用。
 - 促销起止时间由历史价格变化点推导，不代表 Steam 公布的精确截止时间。
 - 插件不接入 ITAD，不需要 Steam Web API Key，也不会持久化查询内容。
+- 只有选择 `llm_provider_id` 后，游戏名、地区和失败猜测才会发送给对应模型。
 - 价格仅供参考，购买前请以实际结算页面为准。
 
 ## 开发
@@ -82,7 +92,7 @@ python -m pip install -r requirements.txt ruff pyyaml
 ruff check .
 ruff format --check .
 python -m unittest
-python -m compileall -q __init__.py main.py models.py api_clients.py price_analysis.py steam_price.py
+python -m compileall -q __init__.py main.py models.py api_clients.py name_correction.py price_analysis.py steam_price.py
 ```
 
 市场发布和人工检查步骤见 [PUBLISHING.md](PUBLISHING.md)。
