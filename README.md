@@ -64,7 +64,7 @@ AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
 /steamprice -US -- -Game Name
 ```
 
-入口别名：`/xhhprice`、`/heyboxprice`。
+入口别名：`/xhhprice`、`/heyboxprice`、`/steam查价`、`/小黑盒查价`。
 
 ## 配置
 

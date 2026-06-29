@@ -9,6 +9,8 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
+EXPECTED_VERSION = "1.2.2"
+EXPECTED_COMMAND_ALIASES = {"xhhprice", "heyboxprice", "steam查价", "小黑盒查价"}
 EXPECTED_MARKET_DATA = {
     "name": "astrbot_plugin_steam_price_heybox",
     "display_name": "Steam 价格查询（小黑盒）",
@@ -28,8 +30,11 @@ class ReleaseMetadataTests(unittest.TestCase):
             {key: metadata.get(key) for key in EXPECTED_MARKET_DATA},
             EXPECTED_MARKET_DATA,
         )
-        self.assertEqual(metadata["version"], "1.2.1")
-        self.assertIn('PLUGIN_VERSION = "1.2.1"', (ROOT / "main.py").read_text(encoding="utf-8"))
+        self.assertEqual(metadata["version"], EXPECTED_VERSION)
+        self.assertIn(
+            f'PLUGIN_VERSION = "{EXPECTED_VERSION}"',
+            (ROOT / "main.py").read_text(encoding="utf-8"),
+        )
         self.assertNotIn("description", metadata)
         self.assertFalse(metadata["repo"].endswith(".git"))
 
@@ -63,6 +68,31 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertIsInstance(query.annotation, ast.Name)
         self.assertEqual(query.annotation.id, "GreedyStr")
         self.assertEqual(handler.args.defaults, [])
+
+    def test_command_declares_chinese_aliases(self) -> None:
+        tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+        handler = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "steam_price_command"
+        )
+        command_decorator = next(
+            decorator
+            for decorator in handler.decorator_list
+            if isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "command"
+        )
+        alias_keyword = next(
+            keyword for keyword in command_decorator.keywords if keyword.arg == "alias"
+        )
+        aliases = {
+            element.value
+            for element in alias_keyword.value.elts
+            if isinstance(element, ast.Constant) and isinstance(element.value, str)
+        }
+
+        self.assertEqual(aliases, EXPECTED_COMMAND_ALIASES)
 
     def test_optional_llm_configuration_defaults(self) -> None:
         schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))

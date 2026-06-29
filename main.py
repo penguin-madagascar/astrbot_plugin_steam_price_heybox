@@ -14,7 +14,7 @@ from .name_correction import (
 from .steam_price import PriceLookupError, SteamPriceService
 
 PLUGIN_NAME = "astrbot_plugin_steam_price_heybox"
-PLUGIN_VERSION = "1.2.1"
+PLUGIN_VERSION = "1.2.2"
 PLUGIN_REPOSITORY = "https://github.com/penguin-madagascar/astrbot_plugin_steam_price_heybox"
 PLUGIN_DESCRIPTION = (
     "无需 API Key，查询 Steam 游戏当前价、历史最低价、促销记录、小黑盒跨区价格与游戏资料。"
@@ -85,7 +85,7 @@ class SteamPriceHeyboxPlugin(Star):
 
     @filter.command(
         "steamprice",
-        alias={"xhhprice", "heyboxprice"},
+        alias={"xhhprice", "heyboxprice", "steam查价", "小黑盒查价"},
         desc="查询 Steam 当前价、史低、促销历史、跨区价格和游戏资料。",
     )
     async def steam_price_command(
