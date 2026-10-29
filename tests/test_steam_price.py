@@ -390,6 +390,16 @@ class CommandParserTests(unittest.TestCase):
         self.assertEqual(extract_appid("steam_appid=1245620"), 1245620)
         self.assertEqual(extract_appid("appid 570"), 570)
 
+    def test_extract_appid_accepts_bare_numbers(self) -> None:
+        self.assertEqual(extract_appid("1938090"), 1938090)
+        self.assertEqual(extract_appid("  730  "), 730)
+
+    def test_extract_appid_ignores_numbers_inside_titles(self) -> None:
+        self.assertEqual(extract_appid("Call of Duty Modern Warfare 2 2022"), 0)
+        self.assertEqual(extract_appid("使命召唤16 现代战争"), 0)
+        self.assertEqual(extract_appid("Battlefield 2042"), 0)
+        self.assertEqual(extract_appid("1938090 使命召唤"), 0)
+
     def test_candidate_selection_prefers_exact_match(self) -> None:
         selected = choose_steam_candidate(
             "Test Game",
@@ -576,6 +586,46 @@ class LlmToolQueryTests(unittest.IsolatedAsyncioTestCase):
     async def test_empty_target_reports_usage_hint(self) -> None:
         with self.assertRaisesRegex(PriceLookupError, "请输入游戏名"):
             await self.service().query("   ")
+
+    async def test_title_with_year_is_searched_instead_of_misread_as_appid(self) -> None:
+        steam = FakeSteamClient()
+
+        await self.service(steam=steam).query("Call of Duty Modern Warfare 2 2022")
+
+        self.assertEqual(
+            steam.search_calls,
+            [("Call of Duty Modern Warfare 2 2022", "CN", "schinese")],
+        )
+
+    async def test_title_without_steam_details_is_not_duplicated(self) -> None:
+        steam = FakeSteamClient(RuntimeError("Steam down"))
+
+        text = await self.service(steam=steam).query("1985810", "regions")
+
+        self.assertIn("游戏：appid=1985810", text)
+        self.assertNotIn("appid=1985810 / appid=1985810", text)
+
+    async def test_title_uses_search_name_when_steam_details_fail(self) -> None:
+        steam = FakeSteamClient(
+            RuntimeError("Steam down"),
+            search_results={"Test Game": [{"appid": 123, "name": "Test Game"}]},
+        )
+
+        text = await self.service(steam=steam).query("Test Game", "regions")
+
+        self.assertIn("游戏：Test Game / appid=123", text)
+        self.assertNotIn("Test Game / appid=123 / appid=123", text)
+
+    async def test_title_falls_back_to_cached_name_when_steam_goes_down(self) -> None:
+        steam = FakeSteamClient()
+        service = self.service(steam=steam)
+        await service.query("123", "summary")
+
+        steam.details_result = RuntimeError("Steam down")
+        text = await service.query("123", "history")
+
+        self.assertIn("游戏：Test Game / appid=123", text)
+        self.assertIn("Steam 商店接口暂时不可达", text)
 
     async def test_unsupported_mode_reports_error(self) -> None:
         with self.assertRaisesRegex(PriceLookupError, "不支持的查询模式：boss"):

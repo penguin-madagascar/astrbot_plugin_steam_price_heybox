@@ -25,6 +25,15 @@ DEFAULT_BOTH_NOTE = (
     "（以上内容已经直接发送到 QQ 给用户了，请勿重复价格、链接或明细，"
     "只用一句符合当前人设的话回应。）"
 )
+STEAM_TIMEOUT_HINT = (
+    "查询超时：Steam 商店接口连接被挂起（当前网络下会偶发）。"
+    "如果知道 appid，可以直接用 appid 重试；appid 查询不需要先搜索商店。"
+)
+
+
+def describe_error(exc: Exception) -> str:
+    """返回异常的可读描述，httpx 部分异常的 str() 是空串。"""
+    return str(exc).strip() or type(exc).__name__
 
 
 class AstrBotGameNameCorrector:
@@ -109,9 +118,12 @@ class SteamPriceHeyboxPlugin(Star):
         except PriceLookupError as exc:
             yield event.plain_result(str(exc))
             return
+        except httpx.TimeoutException:
+            yield event.plain_result(STEAM_TIMEOUT_HINT)
+            return
         except Exception as exc:
             logger.exception("Steam price lookup failed")
-            yield event.plain_result(f"Steam 价格查询失败：{exc}")
+            yield event.plain_result(f"Steam 价格查询失败：{describe_error(exc)}")
             return
 
         for message in messages:
@@ -141,9 +153,11 @@ class SteamPriceHeyboxPlugin(Star):
             text = await self.service.query(game, mode=mode, country=country)
         except PriceLookupError as exc:
             return f"查询失败：{exc}"
+        except httpx.TimeoutException:
+            return STEAM_TIMEOUT_HINT
         except Exception as exc:
             logger.exception("Steam price LLM tool failed")
-            return f"Steam 价格查询失败：{exc}"
+            return f"Steam 价格查询失败：{describe_error(exc)}"
 
         if self.llm_tool_output_mode in {"direct", "both"}:
             try:

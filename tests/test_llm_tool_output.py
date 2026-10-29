@@ -12,6 +12,8 @@ import types
 import unittest
 from pathlib import Path
 
+import httpx
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
 
@@ -107,6 +109,9 @@ class FakeEvent:
             raise self.send_error
         self.sent.append(message_chain)
 
+    def plain_result(self, text: str) -> StubPlain:
+        return StubPlain(text)
+
     def texts(self) -> list[str]:
         return [part.text for chain in self.sent for part in chain.chain]
 
@@ -122,6 +127,12 @@ class FakeService:
         if self.error is not None:
             raise self.error
         return self.result
+
+    async def execute(self, text: str) -> list[str]:
+        self.calls.append((text, "execute", ""))
+        if self.error is not None:
+            raise self.error
+        return [self.result]
 
 
 class LlmToolOutputModeTests(unittest.IsolatedAsyncioTestCase):
@@ -257,6 +268,40 @@ class LlmToolOutputModeTests(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(service.calls, [("艾尔登法环", "history", "US")])
+
+    async def test_tool_timeout_returns_steam_hint(self) -> None:
+        plugin = self.build("model", service=FakeService(error=httpx.ConnectTimeout("")))
+        event = FakeEvent()
+
+        result = await plugin.steam_price_query_tool(event, game="使命召唤16")
+
+        self.assertEqual(result, main.STEAM_TIMEOUT_HINT)
+        self.assertIn("appid", result)
+
+    async def test_command_timeout_returns_steam_hint(self) -> None:
+        plugin = self.build("model", service=FakeService(error=httpx.ReadTimeout("")))
+        event = FakeEvent()
+
+        results = [item async for item in plugin.steam_price_command(event, "使命召唤16")]
+
+        self.assertEqual([item.text for item in results], [main.STEAM_TIMEOUT_HINT])
+
+    async def test_error_text_is_never_empty(self) -> None:
+        plugin = self.build("model", service=FakeService(error=RuntimeError("")))
+        event = FakeEvent()
+
+        result = await plugin.steam_price_query_tool(event, game="测试游戏")
+
+        self.assertEqual(result, "Steam 价格查询失败：RuntimeError")
+
+
+class DescribeErrorTests(unittest.TestCase):
+    def test_describe_error_uses_message_when_present(self) -> None:
+        self.assertEqual(main.describe_error(RuntimeError("boom")), "boom")
+
+    def test_describe_error_falls_back_to_class_name(self) -> None:
+        self.assertEqual(main.describe_error(httpx.ConnectTimeout("")), "ConnectTimeout")
+        self.assertEqual(main.describe_error(ValueError("   ")), "ValueError")
 
 
 if __name__ == "__main__":

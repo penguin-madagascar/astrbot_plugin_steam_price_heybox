@@ -121,6 +121,7 @@ class SteamPriceService:
         self.global_price_limit = max(global_price_limit, 1)
         self.show_api_links = show_api_links
         self.name_corrector = name_corrector
+        self.game_names: dict[int, str] = {}
         self.llm_name_retry_count = llm_name_retry_count
         self.today_provider = today_provider
 
@@ -323,15 +324,29 @@ class SteamPriceService:
             f"{candidate['name']} / appid={candidate['appid']}",
         )
 
+    def remember_details(self, details: SteamGameDetails | None) -> None:
+        if details is None:
+            return
+        if len(self.game_names) >= 256:
+            self.game_names.clear()
+        self.game_names[details.appid] = details.name
+
+    def title_for(self, identity: GameIdentity, details: SteamGameDetails | None) -> str:
+        """标题优先用 Steam 资料里的名称，Steam 不可用时退回缓存或查询词。"""
+        self.remember_details(details)
+        return game_title(identity, details, self.game_names.get(identity.appid, ""))
+
     async def require_details(self, identity: GameIdentity, country: str) -> SteamGameDetails:
         try:
-            return await self.steam_client.details(
+            details = await self.steam_client.details(
                 identity.appid,
                 country,
                 self.default_language,
             )
         except Exception as exc:
             raise PriceLookupError(f"Steam 游戏资料读取失败：{exc}") from exc
+        self.remember_details(details)
+        return details
 
     async def summary_text(self, identity: GameIdentity, country: str) -> str:
         details_result, history_result, regions_result = await asyncio.gather(
@@ -346,7 +361,9 @@ class SteamPriceService:
         if details is None and history is None:
             raise PriceLookupError("Steam 当前价格和小黑盒历史价格均暂时不可用。")
 
-        lines = [game_title(identity, details), f"地区：{country_label(country)}"]
+        lines = [self.title_for(identity, details), f"地区：{country_label(country)}"]
+        if details is None:
+            lines.append(steam_unavailable_note())
         lines.append(format_current_price(details, history))
         if history is not None:
             lines.append(format_lowest(history))
@@ -376,7 +393,9 @@ class SteamPriceService:
             raise PriceLookupError(f"小黑盒历史价格读取失败：{history_result}")
 
         history = history_result
-        lines = [game_title(identity, details), f"地区：{country_label(country)}"]
+        lines = [self.title_for(identity, details), f"地区：{country_label(country)}"]
+        if details is None:
+            lines.append(steam_unavailable_note())
         if history.points:
             lines.append(
                 "记录范围："
@@ -416,7 +435,7 @@ class SteamPriceService:
 
         regions = sorted(regions_result, key=lambda item: item.current_rmb)
         cn_price = next((item for item in regions if item.code == "CN"), None)
-        lines = [game_title(identity, details), "小黑盒全球区价（人民币折算）："]
+        lines = [self.title_for(identity, details), "小黑盒全球区价（人民币折算）："]
         if cn_price:
             lines.append(f"国区基准：约 ¥{decimal_text(cn_price.current_rmb)}")
         for index, region in enumerate(regions[: self.global_price_limit], start=1):
@@ -497,11 +516,19 @@ def usage_text() -> str:
 
 
 def extract_appid(text: str) -> int:
+    """从查询文本里提取 appid。
+
+    只有明确的 appid 形态才算数：整段就是数字、Steam 商店链接，或带
+    appid=/steam_appid= 前缀。游戏名里出现的年份（例如
+    "Call of Duty Modern Warfare 2 2022"）不能被误当成 appid。
+    """
+    text = text.strip()
+    if re.fullmatch(r"\d{3,10}", text):
+        return int(text)
     patterns = (
         r"store\.steampowered\.com/app/(\d+)",
-        r"steam_appid[=:](\d+)",
-        r"\bappid[=: ]+(\d+)\b",
-        r"\b(\d{3,10})\b",
+        r"steam_appid\s*[=: ]\s*(\d+)",
+        r"\bappid\s*[=: ]\s*(\d+)",
     )
     for pattern in patterns:
         match = re.search(pattern, text, re.I)
@@ -563,9 +590,27 @@ def normalize_game_title(value: str) -> str:
     return re.sub(r"[^0-9a-z\u4e00-\u9fff]+", "", value.casefold())
 
 
-def game_title(identity: GameIdentity, details: SteamGameDetails | None) -> str:
-    name = details.name if details else identity.label
+def game_title(
+    identity: GameIdentity,
+    details: SteamGameDetails | None,
+    fallback_name: str = "",
+) -> str:
+    if details is not None:
+        name = details.name
+    else:
+        name = fallback_name or display_name_from_label(identity.label)
+    if name == f"appid={identity.appid}":
+        return f"游戏：appid={identity.appid}"
     return f"游戏：{name} / appid={identity.appid}"
+
+
+def display_name_from_label(label: str) -> str:
+    """把 "名称 / appid=1" 这类标签还原成名称，避免标题里出现两次 appid。"""
+    return label.split(" / appid=")[0].strip() or label
+
+
+def steam_unavailable_note() -> str:
+    return "（Steam 商店接口暂时不可达，本次结果仅来自小黑盒数据。）"
 
 
 def country_label(country: str) -> str:
