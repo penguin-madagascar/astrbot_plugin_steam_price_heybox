@@ -9,8 +9,11 @@ from pathlib import Path
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_VERSION = "1.2.2"
+EXPECTED_VERSION = "1.3.0"
 EXPECTED_COMMAND_ALIASES = {"xhhprice", "heyboxprice", "steam查价", "小黑盒查价"}
+EXPECTED_TOOL_NAME = "steam_price_query"
+EXPECTED_TOOL_ARGS = ("game", "mode", "country")
+EXPECTED_TOOL_OUTPUT_MODES = ("model", "direct", "both")
 EXPECTED_MARKET_DATA = {
     "name": "astrbot_plugin_steam_price_heybox",
     "display_name": "Steam 价格查询（小黑盒）",
@@ -100,6 +103,91 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(schema["llm_provider_id"]["_special"], "select_provider")
         self.assertEqual(schema["llm_provider_id"]["default"], "")
         self.assertEqual(schema["llm_name_retry_count"]["default"], 3)
+
+    def test_llm_tool_is_enabled_by_default(self) -> None:
+        schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(schema["llm_tool_enabled"]["type"], "bool")
+        self.assertIs(schema["llm_tool_enabled"]["default"], True)
+
+    def test_llm_tool_output_mode_declares_select_options(self) -> None:
+        schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+        item = schema["llm_tool_output_mode"]
+
+        self.assertEqual(item["type"], "string")
+        self.assertEqual(item["default"], "model")
+        self.assertEqual(tuple(item["options"]), EXPECTED_TOOL_OUTPUT_MODES)
+        self.assertEqual(len(item["labels"]), len(item["options"]))
+        self.assertTrue(item["hint"])
+
+    def test_both_note_is_configurable(self) -> None:
+        schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
+        item = schema["llm_tool_both_note"]
+
+        self.assertEqual(item["type"], "text")
+        self.assertIn("QQ", item["default"])
+
+    def test_llm_tool_output_modes_match_the_runtime_tuple(self) -> None:
+        tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+        assignment = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "TOOL_OUTPUT_MODES"
+                for target in node.targets
+            )
+        )
+
+        self.assertEqual(
+            tuple(element.value for element in assignment.value.elts),
+            EXPECTED_TOOL_OUTPUT_MODES,
+        )
+
+    def test_llm_tool_interface_is_declared_for_the_model(self) -> None:
+        tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+        handler = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "steam_price_query_tool"
+        )
+
+        decorator = next(
+            decorator
+            for decorator in handler.decorator_list
+            if isinstance(decorator, ast.Call)
+            and isinstance(decorator.func, ast.Attribute)
+            and decorator.func.attr == "llm_tool"
+        )
+        tool_name = next(keyword for keyword in decorator.keywords if keyword.arg == "name")
+        self.assertIsInstance(tool_name.value, ast.Constant)
+        self.assertEqual(tool_name.value.value, EXPECTED_TOOL_NAME)
+
+        arguments = [argument.arg for argument in handler.args.args]
+        self.assertEqual(arguments[:2], ["self", "event"])
+        self.assertEqual(tuple(arguments[2:]), EXPECTED_TOOL_ARGS)
+        self.assertEqual(len(handler.args.defaults), len(EXPECTED_TOOL_ARGS))
+
+        docstring = ast.get_docstring(handler) or ""
+        for argument in EXPECTED_TOOL_ARGS:
+            with self.subTest(argument=argument):
+                self.assertIn(f"{argument}(string)", docstring)
+
+    def test_llm_tool_returns_text_for_the_next_request(self) -> None:
+        tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+        handler = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "steam_price_query_tool"
+        )
+
+        returns = handler.returns
+        self.assertIsInstance(returns, ast.BinOp)
+        self.assertIsInstance(returns.left, ast.Name)
+        self.assertEqual(returns.left.id, "str")
+        self.assertIsInstance(returns.right, ast.Constant)
+        self.assertIsNone(returns.right.value)
+        self.assertFalse(any(isinstance(node, ast.Yield) for node in ast.walk(handler)))
 
     def test_logo_is_256_pixel_square_png(self) -> None:
         data = (ROOT / "logo.png").read_bytes()

@@ -11,6 +11,8 @@
 - 对比全球区价，显示最低价区服及相对国区的差额。
 - 提供基础和详细两级 Steam 游戏资料。
 - 可选用 AstrBot 已配置的 LLM 校正拼写、翻译和未知中文地区。
+- 通过 `steam_price_query` 工具把价格查询能力开放给模型，支持对话式自动查询；
+  工具结果可回给模型总结、直接发送到聊天，或两者都做。
 
 ## 安装
 
@@ -66,6 +68,56 @@ AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
 
 入口别名：`/xhhprice`、`/heyboxprice`、`/steam查价`、`/小黑盒查价`。
 
+## 模型工具（Function Calling）
+
+插件注册一个名为 `steam_price_query` 的 LLM 工具，模型可在对话中自行调用，用户不需要
+输入命令。工具返回纯文本，交给用户的方式由 `llm_tool_output_mode` 决定，见[输出方式](#输出方式)。
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `game` | string | 游戏名称、Steam appid 或 Steam 商店链接 |
+| `mode` | string | `summary`（默认）、`history`、`regions`、`info`、`detailed_info` |
+| `country` | string | 可选地区，如 `CN`、`US`、`香港`；仅 `summary` 与 `history` 生效 |
+
+- 参数是结构化的，不需要 `-地区` 前缀或 `--` 终止符；`country` 直接填 `CN` 或 `中国`。
+- `mode` 容错：大小写、`-`／空格分隔和常见别名（`global`、`basic`、`details` 等）会自动归一。
+- 查询失败时返回 `查询失败：<原因>` 文本，由模型决定是否改写游戏名后重试。
+- 与命令共用同一套 Steam／小黑盒客户端、超时时间和默认地区配置。
+- 在 AstrBot 面板「工具」页可单独停用该工具；`llm_tool_enabled` 关闭后工具直接回复已停用。
+
+> [!IMPORTANT]
+> 如果人设（Persona）里配置了工具白名单，必须把 `steam_price_query` 加入该人设的工具列表，
+> 否则模型看不到这个工具。人设没有配置工具列表（即使用全部工具）时不受影响。
+> 另外，人设提示词里如果有「不要调用工具」这类禁令，也会让这个工具永远不被触发。
+
+### 输出方式
+
+`llm_tool_output_mode` 决定工具结果怎么交给用户：
+
+| 取值 | 行为 | 模型调用次数 | 用户看到 |
+| --- | --- | --- | --- |
+| `model`（默认） | 结果作为工具返回值进入下一轮模型请求，由模型总结 | 本次共 2 次 | 1 条人设化回复，数字可能有改写 |
+| `direct` | 工具内直接发送格式化文本，并结束本轮 Agent Loop | 本次共 1 次 | 1 条原始数据，数字精确，最省时 |
+| `both` | 工具内直接发送格式化文本，同时把文本回给模型并声明已发送到 QQ，要求只补一句评论 | 本次共 2 次 | 2 条：原始数据 + 人设评论 |
+
+- `direct` 走的是 AstrBot 的「工具直接发送」通道：`event.send()` 后返回 `None`，runner 会标记本轮完成，不再请求模型。
+- `both` 的返回文本末尾会附上 `llm_tool_both_note`（默认「已直接发送到 QQ，请勿重复价格、链接或明细」），避免模型复述整段数据。
+- 直接发送失败（如协议端掉线）时会自动退回 `model` 行为，把文本交回模型转述。
+- 三种方式都不改变查询内容，只改变投递路径。
+
+选择建议：
+
+- 只要数字准确、不介意语气生硬：用 `direct`。
+- 既要数字准确、又想保留人设口吻：用 `both`。
+- 希望模型自己组织措辞、能结合上下文解释：用 `model`。
+
+示例对话：
+
+```text
+用户：艾尔登法环现在多少钱，值不值得等打折？
+模型：(调用 steam_price_query，game=艾尔登法环, mode=summary)
+```
+
 ## 配置
 
 | 配置项 | 默认值 | 说明 |
@@ -78,6 +130,9 @@ AstrBot/data/plugins/astrbot_plugin_steam_price_heybox
 | `history_event_limit` | `5` | `history` 显示的最近促销次数 |
 | `global_price_limit` | `10` | `regions` 显示的区服数量 |
 | `show_api_links` | `false` | 是否显示数据接口链接 |
+| `llm_tool_enabled` | `true` | 是否向模型开放 `steam_price_query` 工具 |
+| `llm_tool_output_mode` | `model` | 工具结果输出方式：`model`/`direct`/`both` |
+| `llm_tool_both_note` | 内置文本 | `both` 模式附在结果末尾、给模型看的提示，可自定义 |
 | `llm_provider_id` | 空 | 可选的游戏名与未知中文地区校正模型 |
 | `llm_name_retry_count` | `3` | 首次校正失败后的额外 LLM 重试次数 |
 
@@ -93,6 +148,7 @@ appid 和商店链接不会校正游戏名，只有未知中文地区可能触�
 - 促销起止时间由历史价格变化点推导，不代表 Steam 公布的精确截止时间。
 - 插件不接入 ITAD，不需要 Steam Web API Key，也不会持久化查询内容。
 - 只有选择 `llm_provider_id` 后，游戏名、地区和失败猜测才会发送给对应模型。
+- `model` 与 `both` 会把查询结果作为工具返回值发送给当前 LLM 提供商；`direct` 直接发送到聊天，不经过模型。
 - 价格仅供参考，购买前请以实际结算页面为准。
 
 ## 开发
@@ -104,6 +160,9 @@ ruff format --check .
 python -m unittest
 python -m compileall -q __init__.py main.py models.py api_clients.py name_correction.py price_analysis.py steam_price.py
 ```
+
+`tests/test_llm_tool_output.py` 用替身模块模拟 AstrBot 运行时，因此不安装 AstrBot
+也能测试工具的三种输出分支；其余测试只依赖 `httpx` 和 `pyyaml`。
 
 市场发布和人工检查步骤见 [PUBLISHING.md](PUBLISHING.md)。
 

@@ -1,6 +1,7 @@
 import httpx
 from astrbot.api import AstrBotConfig, logger
-from astrbot.api.event import AstrMessageEvent, filter
+from astrbot.api.event import AstrMessageEvent, MessageChain, filter
+from astrbot.api.message_components import Plain
 from astrbot.api.star import Context, Star, register
 from astrbot.core.star.filter.command import GreedyStr
 
@@ -14,10 +15,15 @@ from .name_correction import (
 from .steam_price import PriceLookupError, SteamPriceService
 
 PLUGIN_NAME = "astrbot_plugin_steam_price_heybox"
-PLUGIN_VERSION = "1.2.2"
+PLUGIN_VERSION = "1.3.0"
 PLUGIN_REPOSITORY = "https://github.com/penguin-madagascar/astrbot_plugin_steam_price_heybox"
 PLUGIN_DESCRIPTION = (
     "无需 API Key，查询 Steam 游戏当前价、历史最低价、促销记录、小黑盒跨区价格与游戏资料。"
+)
+TOOL_OUTPUT_MODES = ("model", "direct", "both")
+DEFAULT_BOTH_NOTE = (
+    "（以上内容已经直接发送到 QQ 给用户了，请勿重复价格、链接或明细，"
+    "只用一句符合当前人设的话回应。）"
 )
 
 
@@ -57,6 +63,11 @@ class SteamPriceHeyboxPlugin(Star):
     ) -> None:
         super().__init__(context)
         self.config = config or {}
+        self.llm_tool_enabled = bool(self.config.get("llm_tool_enabled", True))
+        output_mode = str(self.config.get("llm_tool_output_mode", "model")).strip().lower()
+        self.llm_tool_output_mode = output_mode if output_mode in TOOL_OUTPUT_MODES else "model"
+        both_note = str(self.config.get("llm_tool_both_note", "")).strip()
+        self.llm_tool_both_note = both_note or DEFAULT_BOTH_NOTE
         timeout = float(self.config.get("timeout_seconds", 15))
         self.http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout),
@@ -105,3 +116,42 @@ class SteamPriceHeyboxPlugin(Star):
 
         for message in messages:
             yield event.plain_result(message)
+
+    @filter.llm_tool(name="steam_price_query")
+    async def steam_price_query_tool(
+        self,
+        event: AstrMessageEvent,
+        game: str = "",
+        mode: str = "summary",
+        country: str = "",
+    ) -> str | None:
+        """查询 Steam 游戏价格，返回当前价、史低、促销记录、区价或游戏资料。
+
+        mode 取值：summary（默认，当前价与史低）、history（促销历史）、
+        regions（小黑盒全球区价）、info（基础资料）、detailed_info（扩展资料）。
+
+        Args:
+            game(string): 游戏名称、Steam appid（例如 1245620）或 Steam 商店链接
+            mode(string): summary、history、regions、info、detailed_info 之一
+            country(string): 可选地区，如 CN、US、香港；仅 summary 与 history 生效
+        """
+        if not self.llm_tool_enabled:
+            return "Steam 价格查询工具已被管理员关闭。"
+        try:
+            text = await self.service.query(game, mode=mode, country=country)
+        except PriceLookupError as exc:
+            return f"查询失败：{exc}"
+        except Exception as exc:
+            logger.exception("Steam price LLM tool failed")
+            return f"Steam 价格查询失败：{exc}"
+
+        if self.llm_tool_output_mode in {"direct", "both"}:
+            try:
+                await event.send(MessageChain(chain=[Plain(text)]))
+            except Exception as exc:
+                logger.exception("Steam price direct send failed")
+                return f"{text}\n\n（直接发送失败，请由你转述给用户：{exc}）"
+            if self.llm_tool_output_mode == "direct":
+                return None
+            return f"{text}\n\n{self.llm_tool_both_note}"
+        return text

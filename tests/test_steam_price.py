@@ -27,6 +27,7 @@ from astrbot_plugin_steam_price_heybox.steam_price import (  # noqa: E402
     choose_steam_candidate,
     extract_appid,
     format_current_price,
+    normalize_mode,
     parse_command,
 )
 
@@ -434,6 +435,151 @@ class CommandParserTests(unittest.TestCase):
             format_current_price(unreleased_game, empty_history),
             "Steam 当前价格：尚未发售",
         )
+
+
+class QueryModeTests(unittest.TestCase):
+    def test_canonical_modes_are_returned_unchanged(self) -> None:
+        for mode in ("summary", "history", "regions", "info", "detailed_info"):
+            with self.subTest(mode=mode):
+                self.assertEqual(normalize_mode(mode), mode)
+
+    def test_mode_input_is_normalized(self) -> None:
+        self.assertEqual(normalize_mode("  HISTORY  "), "history")
+        self.assertEqual(normalize_mode("detailed-info"), "detailed_info")
+        self.assertEqual(normalize_mode("detailed info"), "detailed_info")
+
+    def test_mode_aliases_are_resolved(self) -> None:
+        expected = {
+            "price": "summary",
+            "current_price": "summary",
+            "sale": "history",
+            "discounts": "history",
+            "global": "regions",
+            "region": "regions",
+            "basic": "info",
+            "detail": "detailed_info",
+            "details": "detailed_info",
+        }
+        for alias, mode in expected.items():
+            with self.subTest(alias=alias):
+                self.assertEqual(normalize_mode(alias), mode)
+
+    def test_empty_mode_defaults_to_summary(self) -> None:
+        self.assertEqual(normalize_mode(""), "summary")
+        self.assertEqual(normalize_mode(None), "summary")
+
+    def test_unknown_mode_lists_available_modes(self) -> None:
+        with self.assertRaisesRegex(PriceLookupError, "不支持的查询模式：boss"):
+            normalize_mode("boss")
+
+
+class LlmToolQueryTests(unittest.IsolatedAsyncioTestCase):
+    def service(
+        self,
+        steam=None,
+        heybox=None,
+        corrector=None,
+        retry_count=3,
+        default_country="CN",
+        default_history_country="CN",
+    ) -> SteamPriceService:
+        return SteamPriceService(
+            steam_client=steam or FakeSteamClient(),
+            heybox_client=heybox or FakeHeyboxClient(),
+            default_country=default_country,
+            default_history_country=default_history_country,
+            name_corrector=corrector,
+            llm_name_retry_count=retry_count,
+            today_provider=lambda: date(2026, 2, 10),
+        )
+
+    async def test_default_mode_matches_summary_output(self) -> None:
+        service = self.service()
+
+        text = await service.query("123")
+
+        self.assertIn("游戏：Test Game / appid=123", text)
+        self.assertIn("Steam 当前价格：¥60", text)
+        self.assertIn("历史最低：¥50", text)
+        self.assertIn("最低价区服：乌克兰 / UA", text)
+
+    async def test_every_mode_renders_its_own_section(self) -> None:
+        service = self.service()
+
+        history = await service.query("123", "history")
+        regions = await service.query("123", "regions")
+        info = await service.query("123", "info")
+        detailed = await service.query("123", "detailed_info")
+
+        self.assertIn("最近 2 次促销", history)
+        self.assertIn("小黑盒全球区价", regions)
+        self.assertIn("Steam 基本资料", info)
+        self.assertNotIn("Steam 扩展资料", info)
+        self.assertIn("Steam 基本资料", detailed)
+        self.assertIn("Steam 扩展资料", detailed)
+        self.assertIn("Metacritic：88", detailed)
+
+    async def test_query_does_not_require_command_syntax(self) -> None:
+        steam = FakeSteamClient()
+
+        text = await self.service(steam=steam).query("Half-Life 2")
+
+        self.assertEqual(steam.search_calls, [("Half-Life 2", "CN", "schinese")])
+        self.assertIn("Steam 当前价格", text)
+
+    async def test_country_argument_is_applied_to_summary(self) -> None:
+        steam = FakeSteamClient()
+
+        await self.service(steam=steam).query("Test Game", "summary", "US")
+
+        self.assertEqual(steam.search_calls, [("Test Game", "US", "schinese")])
+
+    async def test_country_argument_tolerates_hyphen_prefix(self) -> None:
+        steam = FakeSteamClient()
+
+        await self.service(steam=steam).query("Test Game", "summary", "-us")
+
+        self.assertEqual(steam.search_calls, [("Test Game", "US", "schinese")])
+
+    async def test_defaults_depend_on_mode(self) -> None:
+        steam = FakeSteamClient()
+
+        service = self.service(steam=steam, default_country="US", default_history_country="JP")
+        await service.query("Test Game", "summary")
+        await service.query("Test Game", "history")
+
+        self.assertEqual(
+            steam.search_calls,
+            [("Test Game", "US", "schinese"), ("Test Game", "JP", "schinese")],
+        )
+
+    async def test_non_price_modes_ignore_country_argument(self) -> None:
+        steam = FakeSteamClient()
+
+        await self.service(steam=steam).query("Test Game", "regions", "US")
+
+        self.assertEqual(steam.search_calls, [("Test Game", "CN", "schinese")])
+
+    async def test_unknown_chinese_country_is_delegated_to_llm(self) -> None:
+        corrector = FakeNameCorrector([NameCorrection("Test Game", "SG")])
+        steam = FakeSteamClient()
+
+        await self.service(steam=steam, corrector=corrector).query(
+            "Test Game",
+            "summary",
+            "新加坡",
+        )
+
+        self.assertEqual(corrector.calls[0].unresolved_country, "新加坡")
+        self.assertEqual(steam.search_calls, [("Test Game", "SG", "schinese")])
+
+    async def test_empty_target_reports_usage_hint(self) -> None:
+        with self.assertRaisesRegex(PriceLookupError, "请输入游戏名"):
+            await self.service().query("   ")
+
+    async def test_unsupported_mode_reports_error(self) -> None:
+        with self.assertRaisesRegex(PriceLookupError, "不支持的查询模式：boss"):
+            await self.service().query("123", "boss")
 
 
 def game_details() -> SteamGameDetails:

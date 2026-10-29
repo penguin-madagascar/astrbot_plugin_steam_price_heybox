@@ -21,6 +21,26 @@ from .price_analysis import parse_price_history
 
 CommandMode = Literal["summary", "history", "regions", "info", "detailed_info"]
 COMMAND_MODES = {"history", "regions", "info", "detailed_info"}
+COMMAND_MODE_ORDER = ("summary", "history", "regions", "info", "detailed_info")
+MODE_ALIASES = {
+    "price": "summary",
+    "current": "summary",
+    "current_price": "summary",
+    "sales": "history",
+    "sale": "history",
+    "discount": "history",
+    "discounts": "history",
+    "region": "regions",
+    "global": "regions",
+    "global_price": "regions",
+    "global_prices": "regions",
+    "basic": "info",
+    "basic_info": "info",
+    "detail": "detailed_info",
+    "details": "detailed_info",
+    "detail_info": "detailed_info",
+    "detailed": "detailed_info",
+}
 NameCorrector = Callable[[NameCorrectionRequest], Awaitable[NameCorrection | None]]
 
 COUNTRY_NAMES = {
@@ -149,6 +169,45 @@ class SteamPriceService:
             details = await self.require_details(identity, country)
             return [format_basic_info(details), format_detailed_info(details)]
         return [await self.summary_text(identity, country)]
+
+    async def query(
+        self,
+        target: str,
+        mode: str = "summary",
+        country: str = "",
+    ) -> str:
+        """按结构化参数渲染单一模式的查询结果，供 LLM 函数工具调用。"""
+        text = str(target or "").strip()
+        if not text:
+            raise PriceLookupError("请输入游戏名、Steam appid 或 Steam 商店链接。")
+        selected = normalize_mode(mode)
+        token = str(country or "").strip().lstrip("-").strip()
+
+        if selected in {"summary", "history"}:
+            country_code = parse_country(token) if token else ""
+            default = (
+                self.default_history_country if selected == "history" else self.default_country
+            )
+            effective = country_code or default
+            country_token = ""
+            if token and not country_code:
+                effective = ""
+                country_token = token
+        else:
+            effective = self.default_country
+            country_token = ""
+
+        identity, resolved_country = await self.resolve_game(text, effective, country_token)
+        if selected == "history":
+            return await self.history_text(identity, resolved_country)
+        if selected == "regions":
+            return await self.regions_text(identity)
+        if selected == "info":
+            return format_basic_info(await self.require_details(identity, resolved_country))
+        if selected == "detailed_info":
+            details = await self.require_details(identity, resolved_country)
+            return "\n\n".join((format_basic_info(details), format_detailed_info(details)))
+        return await self.summary_text(identity, resolved_country)
 
     async def resolve_game(
         self,
@@ -456,6 +515,18 @@ def parse_country(value: str) -> str:
     if re.fullmatch(r"[A-Za-z]{2}", text):
         return text.upper()
     return FORMAL_COUNTRY_CODES.get(text, "")
+
+
+def normalize_mode(value: str) -> CommandMode:
+    text = re.sub(r"[\s\-]+", "_", str(value or "").strip().casefold()).strip("_")
+    if not text:
+        return "summary"
+    if text in COMMAND_MODE_ORDER:
+        return text
+    alias = MODE_ALIASES.get(text)
+    if alias is not None:
+        return alias
+    raise PriceLookupError(f"不支持的查询模式：{value}。可选：{'、'.join(COMMAND_MODE_ORDER)}")
 
 
 def unknown_country_error(country_token: str) -> PriceLookupError:
