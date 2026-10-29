@@ -21,9 +21,8 @@ PLUGIN_DESCRIPTION = (
     "无需 API Key，查询 Steam 游戏当前价、历史最低价、促销记录、小黑盒跨区价格与游戏资料。"
 )
 TOOL_OUTPUT_MODES = ("model", "direct", "both")
-DEFAULT_BOTH_NOTE = (
-    "（以上内容已经直接发送到 QQ 给用户了，请勿重复价格、链接或明细，"
-    "只用一句符合当前人设的话回应。）"
+BOTH_NOTE = (
+    "（以上内容已经直接发送给用户，请勿重复价格、链接或明细；如需回应，请结合用户问题继续分析。）"
 )
 STEAM_TIMEOUT_HINT = (
     "查询超时：Steam 商店接口连接被挂起（当前网络下会偶发）。"
@@ -72,11 +71,8 @@ class SteamPriceHeyboxPlugin(Star):
     ) -> None:
         super().__init__(context)
         self.config = config or {}
-        self.llm_tool_enabled = bool(self.config.get("llm_tool_enabled", True))
         output_mode = str(self.config.get("llm_tool_output_mode", "model")).strip().lower()
         self.llm_tool_output_mode = output_mode if output_mode in TOOL_OUTPUT_MODES else "model"
-        both_note = str(self.config.get("llm_tool_both_note", "")).strip()
-        self.llm_tool_both_note = both_note or DEFAULT_BOTH_NOTE
         timeout = float(self.config.get("timeout_seconds", 15))
         self.http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout),
@@ -147,8 +143,6 @@ class SteamPriceHeyboxPlugin(Star):
             mode(string): summary、history、regions、info、detailed_info 之一
             country(string): 可选地区，如 CN、US、香港；仅 summary 与 history 生效
         """
-        if not self.llm_tool_enabled:
-            return "Steam 价格查询工具已被管理员关闭。"
         try:
             text = await self.service.query(game, mode=mode, country=country)
         except PriceLookupError as exc:
@@ -167,5 +161,5 @@ class SteamPriceHeyboxPlugin(Star):
                 return f"{text}\n\n（直接发送失败，请由你转述给用户：{exc}）"
             if self.llm_tool_output_mode == "direct":
                 return None
-            return f"{text}\n\n{self.llm_tool_both_note}"
+            return f"{text}\n\n{BOTH_NOTE}"
         return text

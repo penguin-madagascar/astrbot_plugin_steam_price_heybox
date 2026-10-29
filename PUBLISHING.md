@@ -34,5 +34,8 @@
 7. 等待 `astrbot-plugin-copybara` 同步并自动合并 PR；以“该插件已上架”评论为准。
 8. 市场出现条目后，在干净 AstrBot 实例中安装并验证五种命令模式，以及
    `steam_price_query` 工具在三种 `llm_tool_output_mode` 下的表现。
+   确认工具可通过 AstrBot 工具页和人设工具列表管理，停用工具后命令仍可使用；
+   `direct` 成功发送后结束整个 Agent Loop，`model` 与 `both` 可继续请求模型分析。
+   综合问题建议使用 `model`；`both` 的内置提示不能保证模型不重复数据。
 
 官方文档：<https://docs.astrbot.app/dev/star/plugin-publish.html>

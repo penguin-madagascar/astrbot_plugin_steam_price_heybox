@@ -104,11 +104,13 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(schema["llm_provider_id"]["default"], "")
         self.assertEqual(schema["llm_name_retry_count"]["default"], 3)
 
-    def test_llm_tool_is_enabled_by_default(self) -> None:
+    def test_llm_tool_configuration_only_controls_output(self) -> None:
         schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(schema["llm_tool_enabled"]["type"], "bool")
-        self.assertIs(schema["llm_tool_enabled"]["default"], True)
+        self.assertEqual(
+            {key for key in schema if key.startswith("llm_tool_")},
+            {"llm_tool_output_mode"},
+        )
 
     def test_llm_tool_output_mode_declares_select_options(self) -> None:
         schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
@@ -119,13 +121,6 @@ class ReleaseMetadataTests(unittest.TestCase):
         self.assertEqual(tuple(item["options"]), EXPECTED_TOOL_OUTPUT_MODES)
         self.assertEqual(len(item["labels"]), len(item["options"]))
         self.assertTrue(item["hint"])
-
-    def test_both_note_is_configurable(self) -> None:
-        schema = json.loads((ROOT / "_conf_schema.json").read_text(encoding="utf-8"))
-        item = schema["llm_tool_both_note"]
-
-        self.assertEqual(item["type"], "text")
-        self.assertIn("QQ", item["default"])
 
     def test_llm_tool_output_modes_match_the_runtime_tuple(self) -> None:
         tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))

@@ -139,16 +139,11 @@ class LlmToolOutputModeTests(unittest.IsolatedAsyncioTestCase):
     def build(
         self,
         output_mode: str = "model",
-        enabled: bool = True,
         service=None,
-        note=None,
     ):
         config = {
-            "llm_tool_enabled": enabled,
             "llm_tool_output_mode": output_mode,
         }
-        if note is not None:
-            config["llm_tool_both_note"] = note
         plugin = main.SteamPriceHeyboxPlugin(context=None, config=config)
         self.addAsyncCleanup(plugin.terminate)
         plugin.service = service or FakeService()
@@ -182,22 +177,9 @@ class LlmToolOutputModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsInstance(result, str)
         self.assertTrue(result.startswith("游戏：Test Game / appid=123"))
         self.assertIn("请勿重复", result)
-        self.assertIn("已经直接发送到 QQ", result)
-
-    async def test_both_note_can_be_customized(self) -> None:
-        plugin = self.build("both", note="自定义提示：已经发到 QQ 了。")
-        event = FakeEvent()
-
-        result = await plugin.steam_price_query_tool(event, game="测试游戏")
-
-        self.assertTrue(result.endswith("自定义提示：已经发到 QQ 了。"))
-        self.assertIn("游戏：Test Game / appid=123", result)
-        self.assertEqual(event.texts(), ["游戏：Test Game / appid=123"])
-
-    async def test_blank_both_note_falls_back_to_default(self) -> None:
-        plugin = self.build("both", note="   ")
-
-        self.assertEqual(plugin.llm_tool_both_note, main.DEFAULT_BOTH_NOTE)
+        self.assertIn("已经直接发送给用户", result)
+        self.assertIn("结合用户问题继续分析", result)
+        self.assertNotIn("QQ", result)
 
     async def test_unknown_output_mode_falls_back_to_model(self) -> None:
         plugin = self.build("BOTHISH")
@@ -224,17 +206,6 @@ class LlmToolOutputModeTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("游戏：Test Game / appid=123", result)
         self.assertIn("直接发送失败", result)
         self.assertIn("bot offline", result)
-
-    async def test_disabled_tool_skips_the_service(self) -> None:
-        service = FakeService()
-        plugin = self.build("model", enabled=False, service=service)
-        event = FakeEvent()
-
-        result = await plugin.steam_price_query_tool(event, game="测试游戏")
-
-        self.assertIn("已被管理员关闭", result)
-        self.assertEqual(service.calls, [])
-        self.assertEqual(event.sent, [])
 
     async def test_lookup_error_is_returned_as_text(self) -> None:
         plugin = self.build(
