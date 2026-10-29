@@ -39,6 +39,14 @@
     "description": "是否在回复中显示小黑盒接口链接。",
     "default": false
   },
+  "llm_tool_output_mode": {
+    "type": "string",
+    "description": "steam_price_query 工具的结果输出方式。",
+    "hint": "model：结果回给模型总结，适合比较和分析；direct：直接发送给用户并结束本轮模型处理，适合单次查价；both：先直接发送完整结果，再让模型继续分析。工具启停由 AstrBot 工具页统一管理。",
+    "options": ["model", "direct", "both"],
+    "labels": ["由模型总结（默认）", "直接发送给用户", "两者都做"],
+    "default": "model"
+  },
   "llm_provider_id": {
     "type": "string",
     "description": "用于校正游戏名和未知中文地区的 LLM 提供商。",
