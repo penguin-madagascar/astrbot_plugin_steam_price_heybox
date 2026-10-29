@@ -343,8 +343,11 @@ class SteamPriceService:
                 country,
                 self.default_language,
             )
+        except httpx.TimeoutException:
+            raise
         except Exception as exc:
-            raise PriceLookupError(f"Steam 游戏资料读取失败：{exc}") from exc
+            reason = str(exc).strip() or type(exc).__name__
+            raise PriceLookupError(f"Steam 游戏资料读取失败：{reason}") from exc
         self.remember_details(details)
         return details
 

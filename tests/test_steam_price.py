@@ -7,6 +7,8 @@ from datetime import date
 from decimal import Decimal
 from pathlib import Path
 
+import httpx
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT.parent))
 
@@ -139,6 +141,25 @@ class SteamPriceServiceTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Steam 基本资料", detailed[0])
         self.assertIn("Steam 扩展资料", detailed[1])
         self.assertIn("Metacritic：88", detailed[1])
+
+    async def test_details_timeouts_preserve_type_for_command_and_tool(self) -> None:
+        for mode in ("info", "detailed_info"):
+            for error_type in (httpx.ConnectTimeout, httpx.ReadTimeout):
+                for entry in ("command", "tool"):
+                    with self.subTest(mode=mode, error=error_type, entry=entry):
+                        error = error_type("")
+                        service = self.service(steam=FakeSteamClient(error))
+                        with self.assertRaises(error_type) as caught:
+                            if entry == "command":
+                                await service.execute(f"{mode} 123")
+                            else:
+                                await service.query("123", mode=mode)
+                        self.assertIs(caught.exception, error)
+
+    async def test_details_empty_error_uses_exception_class_name(self) -> None:
+        service = self.service(steam=FakeSteamClient(RuntimeError("")))
+        with self.assertRaisesRegex(PriceLookupError, "Steam 游戏资料读取失败：RuntimeError"):
+            await service.query("123", mode="info")
 
     async def test_appid_query_skips_search(self) -> None:
         steam = FakeSteamClient()
